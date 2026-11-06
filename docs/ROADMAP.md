@@ -5,9 +5,9 @@ Status and exit checks only; behavior is in `SPEC.md`, choices in `DECISIONS.md`
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Decisions, specs, scaffold | done |
-| 1a | Server core: config, token, SQLite, scan, tracks, range audio | done (pending CI run) |
-| 1b | Web client (Webamp), session + WebSocket | built, awaiting review and green light |
-| 2 | Stations (external list, passthrough) | todo |
+| 1a | Server core: config, token, SQLite, scan, tracks, range audio | done |
+| 1b | Web client (Webamp), session + WebSocket | done (pushed, CI green) |
+| 2 | Stations (external list, passthrough) | in progress |
 | 3 | Metadata, duplicates, fetch, playlist extension | todo |
 | 4 | Native clients + offline (Android, desktop) | todo |
 | 5 | Library radio + transcoding | todo |
@@ -36,7 +36,7 @@ Exit met: with `curl` and a token a mixed folder scans, searches and streams wit
 Follow-ups done the same day: accent/case-insensitive Greek search (`search_text`, migration v2), a crashed scan now marks its job failed instead of blocking later scans, nullable fields fixed in the contract. Not tested: the scan-panic path (only reasoned), and a request from another machine on the LAN (owner to try: `curl http://<server-ip>:8080/v1/health` after publishing the port beyond localhost).
 Known gaps carried to later: artist/album are plain text columns (own tables when dedupe needs them); `<audio>` elements can't send an Authorization header, so phase 1b needs a cookie or a short-lived signed URL for audio; the DB mutex is held for short queries only, fine for one owner.
 
-## Phase 1b: web client + session (built and reviewed 2026-11-07, waiting for the green light, not pushed)
+## Phase 1b: web client + session (done 2026-11-07; reviewed, green light given, pushed, CI green)
 - [x] `docs/SPEC-skin.md`
 - [x] Server: cookie login/logout (random server-side session id, rate limited, CSRF guard), `GET/POST /v1/session` (report and commands, commands only while the reporting client's socket is open), `/v1/events` WebSocket with Origin check, skin upload/list/download, static web serving with SPA fallback, JSON 404 for unknown API paths
 - [x] Web client (Vite + TypeScript + Webamp 2.3.1, MIT): login, library with search, Play/Add, skin upload and picker, session reporting (on change and every 10 s while playing), remote commands
@@ -92,6 +92,7 @@ Phone-as-server (Q7), on-device dedupe (Q8), second skins.
 
 ## Phase log
 - 2026-11-06 Phase 0 scaffold, Rust chosen, Greek station seed added.
+- 2026-11-07 Phase 1 (1a+1b) reviewed by two reviewers, fixed, pushed; CI (rust incl. tests, web, openapi) green.
 - 2026-11-07 Phase 1b built: cookie login, session + WebSocket, skins, Webamp client, now-playing script (review pending).
 - 2026-11-07 Phase 1a built: scan, tracks, Range audio, playlists, token auth.
 - 2026-11-07 Public repo + `v0.1.0`; docs refactored (SPEC-api folded into SPEC, DECISIONS added); phase 1 split into 1a/1b.
