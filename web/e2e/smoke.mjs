@@ -33,6 +33,12 @@ const browser = await chromium.launch({
 });
 const page = await (await browser.newContext()).newPage();
 const errors = [];
+// Diagnostics: remember who paused a media element, to explain a failed playback check.
+await page.addInitScript(() => {
+  window.__pauses = [];
+  const orig = HTMLMediaElement.prototype.pause;
+  HTMLMediaElement.prototype.pause = function () { window.__pauses.push((this.id || "?") + ": " + new Error().stack.split("\n").slice(2, 5).join(" <- ")); return orig.apply(this, arguments); };
+});
 page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 page.on("console", (m) => { if (m.type() === "error") errors.push(`console: ${m.text()}`); });
 
@@ -87,8 +93,8 @@ await page.fill("#st-search", "smoke test");
 await page.waitForFunction(() => document.querySelectorAll("#st-list li").length === 1);
 await page.locator("#st-list li button", { hasText: "Play" }).click();
 await page.waitForFunction(() => { const a = document.getElementById("st-audio"); return !a.paused && a.currentTime > 0.3; }, null, { timeout: 15000 }).catch(() => {});
-const playing = await page.evaluate(() => { const a = document.getElementById("st-audio"); return { paused: a.paused, t: a.currentTime }; });
-check(!playing.paused && playing.t > 0, `the station plays in the browser (t=${playing.t.toFixed(2)}s)`);
+const playing = await page.evaluate(() => { const a = document.getElementById("st-audio"); return { paused: a.paused, t: a.currentTime, err: a.error?.code ?? null, net: a.networkState, ready: a.readyState, src: a.src, pauses: window.__pauses, status: document.getElementById("st-status").textContent }; });
+check(!playing.paused && playing.t > 0, `the station plays in the browser (${JSON.stringify(playing)})`);
 let ssess;
 for (let i = 0; i < 40; i++) {
   ssess = await (await fetch(`${base}/v1/session`, { headers: auth })).json();

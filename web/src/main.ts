@@ -96,10 +96,13 @@ async function startPlayer() {
   let lastKey = "";
   let lastSent = 0;
   let currentTrackId: string | null = null;
+  let lastWebampStatus = "";
   const report = (force = false) => {
     if (!webamp) return;
     const status = webamp.getMediaStatus();
-    if (status === "PLAYING" && !stAudio().paused) stAudio().pause();
+    // Webamp just started playing: the station stops (one source at a time)
+    if (status === "PLAYING" && lastWebampStatus !== "PLAYING" && !stAudio().paused) stAudio().pause();
+    lastWebampStatus = status;
     const state = status === "PLAYING" ? "playing" : status === "PAUSED" ? "paused" : "stopped";
     const key = `${state}|${currentTrackId ?? ""}`;
     const now = Date.now();

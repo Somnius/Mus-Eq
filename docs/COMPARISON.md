@@ -16,6 +16,17 @@ That gap is the reason Mus-Eq exists. The usual answer today is a stack: a serve
 - Running or calling a separate program (yt-dlp, ffmpeg, `fpcalc`) is different from copying its code, but check that program's own licence and terms.
 - Station lists, skins and metadata services have their own terms (see the SPEC risks).
 
+## How we use projects we can't copy: build our own in Rust
+
+For a project with no licence, or with a licence we can't take code from (GPL, AGPL, or anything not compatible with ours), we do not copy it. We study **what it does and how it behaves** and build our own implementation in Rust, so Mus-Eq gets close to the same functionality with code that is ours.
+
+To keep that clean:
+- Work from behaviour: the project's documentation, its public API and file formats, and what it does when run, written down as our own short behaviour notes ("a scan walks the folder, skips unchanged files, detects moves by hash").
+- Implement from those notes, not from the other project's source open beside us. Don't transcribe code, structure, names or comments.
+- Public specifications are fair game to implement exactly (for example the OpenSubsonic API, which is Apache-2.0, or the MusicBrainz and AcoustID web APIs).
+- Where a project is MIT, Apache-2.0 or Unlicense we may use or copy code with its notice, but we still prefer a small own implementation unless the code is a clear fit.
+- Each borrowed idea gets a line in `docs/DECISIONS.md` saying where the idea came from, so credit stays honest.
+
 ## Verified facts (GitHub, 2026-11-07)
 
 ### Integrated servers and clients
