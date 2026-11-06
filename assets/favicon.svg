@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Mus-Eq">
+  <title>Mus-Eq</title>
+  <defs>
+    <linearGradient id="led" gradientUnits="userSpaceOnUse" x1="0" y1="210" x2="0" y2="58">
+      <stop offset="0" stop-color="#1c8a44"/>
+      <stop offset="0.5" stop-color="#86d24a"/>
+      <stop offset="1" stop-color="#f2d34b"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#14171c" stroke="#d5dae3" stroke-width="10"/>
+  <g fill="url(#led)">
+    <rect x="32" y="64" width="52" height="146" rx="10"/>
+    <rect x="102" y="124" width="52" height="86" rx="10"/>
+    <rect x="172" y="64" width="52" height="146" rx="10"/>
+  </g>
+  <g fill="#f4f5f7">
+    <rect x="32" y="46" width="52" height="10" rx="3"/>
+    <rect x="102" y="106" width="52" height="10" rx="3"/>
+    <rect x="172" y="46" width="52" height="10" rx="3"/>
+  </g>
+</svg>

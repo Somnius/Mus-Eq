@@ -23,3 +23,4 @@
 - 2026-11-07 **Cookie = random server-side session id**, not the token (review finding): logout revokes it; login attempts are rate limited.
 - 2026-11-07 **A moved or renamed file keeps its row** (matched by sha256 when its old path is gone), so playlists don't lose it.
 - 2026-11-07 **Web client uses Webamp's private `__onStateChange` hook** to notice state changes. If a Webamp upgrade removes it, session reporting stops (the 10 s interval report still fires). Pin the Webamp version and re-run the smoke test on upgrades.
+- 2026-11-07 **Logo:** three chunky equalizer bars (tall-short-tall, an M) with peak caps; segmented LED version for the README (assets/logo.svg), solid-bar version for the favicon (assets/favicon.svg). Hand-written SVG, no text or external assets.

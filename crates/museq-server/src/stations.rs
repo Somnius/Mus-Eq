@@ -314,6 +314,23 @@ async fn check_raw_http(url: &str) -> Verdict {
     }
 }
 
+/// The reqwest message alone is "error sending request"; the useful part is further down the chain.
+fn error_chain(e: &reqwest::Error) -> String {
+    use std::error::Error;
+    let mut parts = vec![e.to_string()];
+    let mut src = e.source();
+    while let Some(s) = src {
+        let t = s.to_string();
+        if parts.last() != Some(&t) {
+            parts.push(t);
+        }
+        src = s.source();
+    }
+    let joined = parts.join(": ");
+    // keep it short and drop the URL (it is already in the row)
+    joined.chars().take(160).collect()
+}
+
 pub async fn check_one(client: &reqwest::Client, url: &str) -> Verdict {
     let fetch = async {
         let mut resp = client
@@ -354,7 +371,7 @@ pub async fn check_one(client: &reqwest::Client, url: &str) -> Verdict {
                     return raw;
                 }
             }
-            dead(e.without_url().to_string())
+            dead(error_chain(&e))
         }
     }
 }
