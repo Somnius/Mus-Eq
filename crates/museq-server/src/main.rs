@@ -1,5 +1,4 @@
 use museq_server::{api, config::Config, db};
-use std::sync::{Arc, Mutex};
 
 #[tokio::main]
 async fn main() {
@@ -17,11 +16,13 @@ async fn main() {
         );
         std::process::exit(2);
     });
-    let state = api::AppState {
-        db: Arc::new(Mutex::new(conn)),
-        root: Arc::new(cfg.library.clone()),
-        token: Arc::new(cfg.token.clone()),
-    };
+    let state = api::AppState::new(
+        conn,
+        cfg.library.clone(),
+        cfg.token.clone(),
+        cfg.skins_dir.clone(),
+        cfg.web_dir.clone(),
+    );
     let listener = tokio::net::TcpListener::bind(&cfg.bind)
         .await
         .unwrap_or_else(|e| panic!("cannot bind {}: {e}", cfg.bind));

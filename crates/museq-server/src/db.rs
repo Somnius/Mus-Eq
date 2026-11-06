@@ -88,6 +88,12 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
         }
         conn.pragma_update(None, "user_version", 2)?;
     }
+    if version < 3 {
+        conn.execute_batch(
+            "CREATE TABLE skin(id TEXT PRIMARY KEY, name TEXT NOT NULL, bytes INTEGER NOT NULL);",
+        )?;
+        conn.pragma_update(None, "user_version", 3)?;
+    }
     // A job left "running" by a crash will never finish.
     conn.execute("UPDATE job SET state='failed', error='interrupted by restart' WHERE state IN ('queued','running')", [])?;
     Ok(conn)

@@ -5,6 +5,8 @@ use std::path::PathBuf;
 /// - `MUSEQ_BIND`     listen address (default `127.0.0.1:8080`)
 /// - `MUSEQ_LIBRARY`  folder with the music files (default `./library`)
 /// - `MUSEQ_DB`       SQLite file (default `./museq.db`)
+/// - `MUSEQ_SKINS_DIR` where uploaded `.wsz` skins are stored (default `./skins`)
+/// - `MUSEQ_WEB_DIR`  built web client to serve at `/` (optional)
 /// - `MUSEQ_TOKEN` or `MUSEQ_TOKEN_FILE`  the owner bearer token (required, at least 16 characters)
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -12,6 +14,8 @@ pub struct Config {
     pub library: PathBuf,
     pub db: PathBuf,
     pub token: String,
+    pub skins_dir: PathBuf,
+    pub web_dir: Option<PathBuf>,
 }
 
 pub const MIN_TOKEN_LEN: usize = 16;
@@ -42,6 +46,10 @@ impl Config {
                 .unwrap_or_else(|_| "./museq.db".into())
                 .into(),
             token,
+            skins_dir: std::env::var("MUSEQ_SKINS_DIR")
+                .unwrap_or_else(|_| "./skins".into())
+                .into(),
+            web_dir: std::env::var("MUSEQ_WEB_DIR").ok().map(Into::into),
         })
     }
 }

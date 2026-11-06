@@ -7,7 +7,6 @@ use http_body_util::BodyExt;
 use museq_server::{api, db};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 const TOKEN: &str = "test-token-0123456789";
@@ -17,11 +16,13 @@ fn fixtures() -> PathBuf {
 }
 
 fn app_for(root: PathBuf) -> Router {
-    api::router(api::AppState {
-        db: Arc::new(Mutex::new(db::open_in_memory().unwrap())),
-        root: Arc::new(root),
-        token: Arc::new(TOKEN.into()),
-    })
+    api::router(api::AppState::new(
+        db::open_in_memory().unwrap(),
+        root,
+        TOKEN.into(),
+        std::env::temp_dir().join(format!("museq-test-skins-{}", std::process::id())),
+        None,
+    ))
 }
 
 async fn call(

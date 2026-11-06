@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
-    extract::{Path, Query, Request, State},
-    http::{StatusCode, header::AUTHORIZATION},
+    extract::{DefaultBodyLimit, Path, Query, Request, State},
+    http::{HeaderMap, Method, StatusCode, header, header::AUTHORIZATION},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -21,13 +21,37 @@ pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub root: Arc<PathBuf>,
     pub token: Arc<String>,
+    pub skins_dir: Arc<PathBuf>,
+    pub web_dir: Option<Arc<PathBuf>>,
+    pub events: tokio::sync::broadcast::Sender<String>,
+    pub session: Arc<Mutex<crate::session::Session>>,
 }
 
-fn err(status: StatusCode, msg: &str) -> Response {
+impl AppState {
+    pub fn new(
+        db: Connection,
+        root: PathBuf,
+        token: String,
+        skins_dir: PathBuf,
+        web_dir: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            db: Arc::new(Mutex::new(db)),
+            root: Arc::new(root),
+            token: Arc::new(token),
+            skins_dir: Arc::new(skins_dir),
+            web_dir: web_dir.map(Arc::new),
+            events: tokio::sync::broadcast::channel(64).0,
+            session: Arc::new(Mutex::new(crate::session::Session::default())),
+        }
+    }
+}
+
+pub(crate) fn err(status: StatusCode, msg: &str) -> Response {
     (status, Json(json!({ "error": msg }))).into_response()
 }
 
-fn internal<E: std::fmt::Display>(e: E) -> Response {
+pub(crate) fn internal<E: std::fmt::Display>(e: E) -> Response {
     eprintln!("internal error: {e}");
     err(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
 }
@@ -45,11 +69,31 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/playlists/{id}/items", post(add_item).put(set_items))
         .route("/v1/jobs", post(create_job))
         .route("/v1/jobs/{id}", get(get_job))
+        .route(
+            "/v1/session",
+            get(crate::session::get_session).post(crate::session::post_session),
+        )
+        .route("/v1/events", get(crate::session::events))
+        .route(
+            "/v1/skins",
+            get(crate::skins::list_skins).post(crate::skins::upload_skin),
+        )
+        .route("/v1/skins/{id}", get(crate::skins::get_skin))
+        .layer(DefaultBodyLimit::max(crate::skins::MAX_SKIN_BYTES))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth));
-    Router::new()
+    let mut app = Router::new()
         .route("/v1/health", get(health))
-        .merge(protected)
-        .with_state(state)
+        .route("/v1/login", post(login))
+        .route("/v1/logout", post(logout))
+        .merge(protected);
+    if let Some(dir) = state.web_dir.clone() {
+        // The web client is served from the same origin as the API, so cookies need no CORS.
+        let index = dir.join("index.html");
+        app = app.fallback_service(
+            tower_http::services::ServeDir::new(&*dir).fallback(ServeFile::new(index)),
+        );
+    }
+    app.with_state(state)
 }
 
 // ---- auth -------------------------------------------------------------
@@ -61,19 +105,68 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+const COOKIE: &str = "museq_token";
+
+fn cookie_token(headers: &HeaderMap) -> Option<String> {
+    let raw = headers.get(header::COOKIE)?.to_str().ok()?;
+    raw.split(';')
+        .filter_map(|p| p.trim().split_once('='))
+        .find(|(k, _)| *k == COOKIE)
+        .map(|(_, v)| v.to_string())
+}
+
 async fn auth(State(s): State<AppState>, req: Request, next: Next) -> Response {
-    let ok = req
+    let bearer = req
         .headers()
         .get(AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|t| ct_eq(t.as_bytes(), s.token.as_bytes()))
         .unwrap_or(false);
-    if ok {
-        next.run(req).await
-    } else {
-        err(StatusCode::UNAUTHORIZED, "missing or invalid token")
+    if !bearer {
+        let cookie = cookie_token(req.headers())
+            .map(|t| ct_eq(t.as_bytes(), s.token.as_bytes()))
+            .unwrap_or(false);
+        if !cookie {
+            return err(StatusCode::UNAUTHORIZED, "missing or invalid token");
+        }
+        // Cookie auth is ambient, so mutating requests must be JSON or a raw upload:
+        // a cross-site HTML form cannot send those without a CORS preflight.
+        if !matches!(*req.method(), Method::GET | Method::HEAD) {
+            let ct = req
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if !(ct.starts_with("application/json") || ct.starts_with("application/octet-stream")) {
+                return err(StatusCode::UNSUPPORTED_MEDIA_TYPE, "use application/json");
+            }
+        }
     }
+    next.run(req).await
+}
+
+#[derive(Deserialize)]
+struct Login {
+    token: String,
+}
+
+async fn login(State(s): State<AppState>, Json(body): Json<Login>) -> Response {
+    if !ct_eq(body.token.as_bytes(), s.token.as_bytes()) {
+        return err(StatusCode::UNAUTHORIZED, "invalid token");
+    }
+    // No `Secure` flag on purpose: the server is often reached over plain HTTP on a LAN or
+    // Tailscale. Put it behind TLS for a public endpoint.
+    let cookie = format!(
+        "{COOKIE}={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000",
+        body.token
+    );
+    (StatusCode::NO_CONTENT, [(header::SET_COOKIE, cookie)]).into_response()
+}
+
+async fn logout() -> Response {
+    let cookie = format!("{COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+    (StatusCode::NO_CONTENT, [(header::SET_COOKIE, cookie)]).into_response()
 }
 
 // ---- health -----------------------------------------------------------
@@ -94,7 +187,7 @@ async fn health() -> Json<Health> {
 // ---- tracks -----------------------------------------------------------
 
 #[derive(Serialize)]
-struct Track {
+pub(crate) struct Track {
     id: String,
     title: String,
     artist: Option<String>,
@@ -103,9 +196,9 @@ struct Track {
     preferred_file_id: String,
 }
 
-const TRACK_COLS: &str = "id, title, artist, album, duration_ms, preferred_file_id";
+pub(crate) const TRACK_COLS: &str = "id, title, artist, album, duration_ms, preferred_file_id";
 
-fn track_from_row(r: &rusqlite::Row) -> rusqlite::Result<Track> {
+pub(crate) fn track_from_row(r: &rusqlite::Row) -> rusqlite::Result<Track> {
     Ok(Track {
         id: r.get::<_, i64>(0)?.to_string(),
         title: r.get(1)?,

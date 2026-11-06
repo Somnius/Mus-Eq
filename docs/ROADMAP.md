@@ -14,6 +14,12 @@ Status and exit checks only; behavior is in `SPEC.md`, choices in `DECISIONS.md`
 | 6 | Live phone radio (mic, ducking, mixer) | todo |
 | 7 | Polish: phone-as-server, on-device dedupe, more skins | todo |
 
+## Phase gate (applies to every phase)
+1. Tests are written and run (unit + integration; container check where relevant).
+2. Independent reviews of the code and docs by two reviewers; findings are fixed or logged.
+3. Docs updated: this roadmap, `SPEC.md`, `DECISIONS.md`, `openapi.yaml`.
+4. The owner gives the green light before the next phase starts.
+
 ## Phase 0: decisions, specs, scaffold (done 2026-11-06/07)
 Rust workspace, `/v1/health`, `docs/openapi.yaml` (lint valid), Containerfile + compose, CI workflow, public repo, `v0.1.0`.
 Exit met: container answers `/v1/health` from the host (Docker; Podman untested); OpenAPI lint valid; CI green on GitHub.
