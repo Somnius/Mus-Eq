@@ -44,7 +44,8 @@ async fn main() {
         cfg.token.clone(),
         cfg.skins_dir.clone(),
         cfg.web_dir.clone(),
-    );
+    )
+    .allow_private_stations(cfg.allow_private_stations);
     let listener = tokio::net::TcpListener::bind(&cfg.bind)
         .await
         .unwrap_or_else(|e| panic!("cannot bind {}: {e}", cfg.bind));

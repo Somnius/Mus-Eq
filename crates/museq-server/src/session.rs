@@ -56,7 +56,7 @@ fn session_json(s: &AppState) -> Value {
     let station = sess.station_id.and_then(|id| {
         db::lock(&s.db)
             .query_row(
-                "SELECT id, name, category, url FROM station WHERE id=?1",
+                "SELECT id, name, category, url, source FROM station WHERE id=?1",
                 [id],
                 |r| {
                     Ok(json!({
@@ -64,6 +64,8 @@ fn session_json(s: &AppState) -> Value {
                         "name": r.get::<_, String>(1)?,
                         "category": r.get::<_, String>(2)?,
                         "url": r.get::<_, String>(3)?,
+                        "kind": "external",
+                        "source": r.get::<_, String>(4)?,
                     }))
                 },
             )

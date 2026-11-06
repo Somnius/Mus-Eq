@@ -323,7 +323,7 @@ Descriptions are in our own words from READMEs, documentation and observed behav
 
 ### Phase 2: stations
 1. Stations are stream URLs the server stores; clients play them. No decoding, no proxy (Navidrome, Mopidy, the setup guide).
-2. A liveness job that flags and never deletes, with the date of the last good check.
+2. A liveness job that flags and never deletes, with the date of the last check.
 3. Dead or plain-HTTP streams must fail gently in the client.
 4. A station directory is a possible add-on; its terms are unverified, so it stays optional.
 5. Generated "artist radio" is a playlist feature, not a station problem; leave it for phase 3 and 5.

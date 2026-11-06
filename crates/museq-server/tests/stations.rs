@@ -12,14 +12,20 @@ use tower::ServiceExt;
 
 const TOKEN: &str = "test-token-0123456789";
 
-fn app() -> Router {
-    api::router(api::AppState::new(
+fn state(allow_private: bool) -> api::AppState {
+    api::AppState::new(
         db::open_in_memory().unwrap(),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lib"),
         TOKEN.into(),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.work/tmp/test-skins"),
         None,
-    ))
+    )
+    .allow_private_stations(allow_private)
+}
+
+/// Most tests talk to fake radio servers on 127.0.0.1, so they run with private addresses allowed.
+fn app() -> Router {
+    api::router(state(true))
 }
 
 async fn call(app: &Router, method: Method, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -45,6 +51,10 @@ async fn call(app: &Router, method: Method, uri: &str, body: Option<Value>) -> (
 
 /// A fake radio server: answers every connection with `head`, then streams `body` bytes and waits.
 async fn fake(head: &'static str, body: usize) -> String {
+    fake_bytes(head, vec![0x55u8; body]).await
+}
+
+async fn fake_bytes(head: &'static str, body: Vec<u8>) -> String {
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = l.local_addr().unwrap();
     tokio::spawn(async move {
@@ -52,11 +62,12 @@ async fn fake(head: &'static str, body: usize) -> String {
             let Ok((mut s, _)) = l.accept().await else {
                 return;
             };
+            let body = body.clone();
             tokio::spawn(async move {
                 let mut buf = [0u8; 1024];
                 let _ = s.read(&mut buf).await;
                 let _ = s.write_all(head.as_bytes()).await;
-                let _ = s.write_all(&vec![0x55u8; body]).await;
+                let _ = s.write_all(&body).await;
                 tokio::time::sleep(std::time::Duration::from_secs(20)).await;
             });
         }
@@ -306,4 +317,186 @@ async fn a_second_station_check_is_refused_while_one_runs() {
     )
     .await;
     assert_eq!(s, StatusCode::CONFLICT);
+}
+
+#[test]
+fn only_public_addresses_count_as_public() {
+    use std::net::IpAddr;
+    for (ip, public) in [
+        ("93.184.216.34", true),
+        ("8.8.8.8", true),
+        ("2606:4700:4700::1111", true),
+        ("127.0.0.1", false),
+        ("10.1.2.3", false),
+        ("172.16.0.1", false),
+        ("192.168.1.10", false),
+        ("169.254.169.254", false),
+        ("100.64.0.1", false),
+        ("0.0.0.0", false),
+        ("224.0.0.1", false),
+        ("::1", false),
+        ("fe80::1", false),
+        ("fd00::1", false),
+        ("::ffff:127.0.0.1", false),
+        ("::ffff:93.184.216.34", true),
+    ] {
+        assert_eq!(
+            stations::is_public(ip.parse::<IpAddr>().unwrap()),
+            public,
+            "{ip}"
+        );
+    }
+}
+
+#[test]
+fn stream_urls_need_a_host_and_no_credentials() {
+    for bad in [
+        "http://",
+        "https://",
+        "ftp://a/b",
+        "javascript:alert(1)",
+        "http://user:pw@a.example/x",
+        "http://u@a.example/x",
+        "http://a b/c",
+        "//a.example/x",
+    ] {
+        assert!(stations::parse_stream_url(bad).is_none(), "{bad}");
+    }
+    assert!(stations::parse_stream_url("https://radio.example/stream?x=1").is_some());
+    assert!(stations::parse_stream_url("http://[2606:4700::1111]:8000/live").is_some());
+}
+
+#[test]
+fn audio_sniffing_recognises_streams_and_rejects_pages() {
+    assert!(stations::sniff_audio(b"ID3\x04\x00"));
+    assert!(stations::sniff_audio(&[0xFF, 0xFB, 0x90, 0x00]));
+    assert!(stations::sniff_audio(b"OggS\x00"));
+    assert!(stations::sniff_audio(b"#EXTM3U\n"));
+    assert!(!stations::sniff_audio(b"<html><body>"));
+    assert!(!stations::sniff_audio(b"UUUUUUUU"));
+    assert!(!stations::sniff_audio(b""));
+}
+
+#[tokio::test]
+async fn by_default_private_and_loopback_stations_are_refused() {
+    let app = api::router(state(false));
+    for bad in [
+        "http://127.0.0.1:8000/x",
+        "http://localhost/x",
+        "http://10.0.0.5/x",
+        "http://169.254.169.254/latest/meta-data",
+        "http://[::1]:8000/x",
+        "http://192.168.1.2/radio",
+    ] {
+        let (s, body) = call(
+            &app,
+            Method::POST,
+            "/v1/stations",
+            Some(json!({"name": "x", "url": bad})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{bad}: {body}");
+    }
+    let (s, body) = call(
+        &app,
+        Method::POST,
+        "/v1/stations",
+        Some(json!({"name": "x", "url": "http://user:pw@8.8.8.8/x"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    // a public literal address is fine (no DNS needed)
+    let (s, _) = call(
+        &app,
+        Method::POST,
+        "/v1/stations",
+        Some(json!({"name": "ok", "url": "http://93.184.216.34/stream"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn the_check_will_not_probe_private_hosts_even_if_one_got_into_the_database() {
+    let live = fake(
+        "HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nConnection: close\r\n\r\n",
+        2048,
+    )
+    .await;
+    let st = state(false);
+    db::lock(&st.db)
+        .execute("INSERT INTO station(name, category, url, source, search_text) VALUES('inside','Music',?1,'manual','inside')", [&live])
+        .unwrap();
+    let app = api::router(st);
+    let (_, job) = call(
+        &app,
+        Method::POST,
+        "/v1/jobs",
+        Some(json!({"kind": "check_stations"})),
+    )
+    .await;
+    let uri = format!("/v1/jobs/{}", job["id"].as_str().unwrap());
+    for _ in 0..200 {
+        let (_, j) = call(&app, Method::GET, &uri, None).await;
+        if j["state"] == "done" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let (_, all) = call(&app, Method::GET, "/v1/stations", None).await;
+    assert_eq!(all["items"][0]["alive"], false);
+    assert_eq!(all["items"][0]["error"], "address is not public");
+}
+
+#[tokio::test]
+async fn streams_without_a_content_type_must_look_like_audio() {
+    let mp3 = fake_bytes(
+        "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n",
+        vec![0xFF, 0xFB, 0x90, 0x00, 1, 2, 3],
+    )
+    .await;
+    let junk = fake("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n", 512).await; // 0x55 bytes
+    let app = app();
+    for (name, url) in [("mp3", &mp3), ("junk", &junk)] {
+        call(
+            &app,
+            Method::POST,
+            "/v1/stations",
+            Some(json!({"name": name, "url": url})),
+        )
+        .await;
+    }
+    let (_, job) = call(
+        &app,
+        Method::POST,
+        "/v1/jobs",
+        Some(json!({"kind": "check_stations"})),
+    )
+    .await;
+    let uri = format!("/v1/jobs/{}", job["id"].as_str().unwrap());
+    for _ in 0..200 {
+        let (_, j) = call(&app, Method::GET, &uri, None).await;
+        if j["state"] == "done" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let (_, all) = call(&app, Method::GET, "/v1/stations", None).await;
+    let get = |n: &str| {
+        all["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == n)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(get("mp3")["alive"], true);
+    assert_eq!(get("junk")["alive"], false);
+    assert!(
+        get("junk")["error"]
+            .as_str()
+            .unwrap()
+            .contains("do not look like audio")
+    );
 }

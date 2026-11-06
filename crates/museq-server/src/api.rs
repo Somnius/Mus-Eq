@@ -33,6 +33,8 @@ pub struct AppState {
     pub login_fails: Arc<Mutex<(Instant, u32)>>,
     /// Connected WebSocket clients by client id (a player must be connected to receive commands).
     pub players: Arc<Mutex<HashMap<String, usize>>>,
+    /// Allow station URLs on loopback/private addresses (`MUSEQ_ALLOW_PRIVATE_STATIONS`).
+    pub allow_private_stations: bool,
 }
 
 const COOKIE_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
@@ -59,7 +61,13 @@ impl AppState {
             cookies: Arc::new(Mutex::new(HashMap::new())),
             login_fails: Arc::new(Mutex::new((Instant::now(), 0))),
             players: Arc::new(Mutex::new(HashMap::new())),
+            allow_private_stations: false,
         }
+    }
+
+    pub fn allow_private_stations(mut self, allow: bool) -> Self {
+        self.allow_private_stations = allow;
+        self
     }
 }
 
@@ -646,6 +654,7 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
     let db = s.db.clone();
     let task_db = db.clone();
     let root = s.root.clone();
+    let allow_private = s.allow_private_stations;
     let work = tokio::spawn(async move {
         let _ = crate::db::lock(&task_db).execute(
             "UPDATE job SET state='running', attempts=attempts+1 WHERE id=?1",
@@ -658,7 +667,7 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
                 .map_err(|_| "scan crashed")?;
             serde_json::to_string(&stats).map_err(|_| "cannot encode result")?
         } else {
-            crate::stations::check_all(task_db.clone())
+            crate::stations::check_all(task_db.clone(), allow_private)
                 .await
                 .to_string()
         };

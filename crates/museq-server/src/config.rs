@@ -6,7 +6,8 @@ use std::path::PathBuf;
 /// - `MUSEQ_LIBRARY`  folder with the music files (default `./library`)
 /// - `MUSEQ_DB`       SQLite file (default `./museq.db`)
 /// - `MUSEQ_SKINS_DIR` where uploaded `.wsz` skins are stored (default `./skins`)
-/// - `MUSEQ_STATIONS_SEED` comma-separated `Name|Category|URL` lists imported at startup (new stations only)
+/// - `MUSEQ_STATIONS_SEED` comma-separated paths of `Name|Category|URL` list files imported at startup (new stations only)
+/// - `MUSEQ_ALLOW_PRIVATE_STATIONS` set to `1` to allow stations on loopback/private addresses (for radio on your own network)
 /// - `MUSEQ_WEB_DIR`  built web client to serve at `/` (optional)
 /// - `MUSEQ_TOKEN` or `MUSEQ_TOKEN_FILE`  the owner bearer token (required, at least 16 characters)
 #[derive(Clone, Debug)]
@@ -18,6 +19,7 @@ pub struct Config {
     pub skins_dir: PathBuf,
     pub web_dir: Option<PathBuf>,
     pub stations_seeds: Vec<PathBuf>,
+    pub allow_private_stations: bool,
 }
 
 pub const MIN_TOKEN_LEN: usize = 16;
@@ -52,6 +54,10 @@ impl Config {
                 .unwrap_or_else(|_| "./skins".into())
                 .into(),
             web_dir: std::env::var("MUSEQ_WEB_DIR").ok().map(Into::into),
+            allow_private_stations: matches!(
+                std::env::var("MUSEQ_ALLOW_PRIVATE_STATIONS").as_deref(),
+                Ok("1" | "true")
+            ),
             stations_seeds: std::env::var("MUSEQ_STATIONS_SEED")
                 .map(|v| {
                     v.split(',')

@@ -21,10 +21,86 @@ pub struct SeedStation {
     pub url: String,
 }
 
+/// A stream address we accept: http(s), a real host, no embedded credentials, no whitespace.
+pub fn parse_stream_url(u: &str) -> Option<url::Url> {
+    if u.len() > 2048 || u.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let parsed = url::Url::parse(u).ok()?;
+    let ok = matches!(parsed.scheme(), "http" | "https")
+        && parsed.host().is_some()
+        && parsed.username().is_empty()
+        && parsed.password().is_none();
+    ok.then_some(parsed)
+}
+
 fn valid_url(u: &str) -> bool {
-    (u.starts_with("http://") || u.starts_with("https://"))
-        && u.len() <= 2048
-        && !u.chars().any(|c| c.is_whitespace() || c.is_control())
+    parse_stream_url(u).is_some()
+}
+
+/// True for addresses on the public internet. Loopback, private ranges, link-local (which
+/// includes the cloud metadata address), carrier-grade NAT, multicast and unspecified are not.
+pub fn is_public(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v) => {
+            let o = v.octets();
+            !(v.is_loopback()
+                || v.is_private()
+                || v.is_link_local()
+                || v.is_unspecified()
+                || v.is_broadcast()
+                || v.is_multicast()
+                || (o[0] == 100 && (o[1] & 0xC0) == 64) // 100.64.0.0/10
+                || o[0] == 0)
+        }
+        IpAddr::V6(v) => {
+            if let Some(mapped) = v.to_ipv4_mapped() {
+                return is_public(IpAddr::V4(mapped));
+            }
+            let seg = v.segments();
+            !(v.is_loopback()
+                || v.is_unspecified()
+                || v.is_multicast()
+                || (seg[0] & 0xFE00) == 0xFC00 // fc00::/7 unique local
+                || (seg[0] & 0xFFC0) == 0xFE80) // fe80::/10 link-local
+        }
+    }
+}
+
+/// Refuse stream hosts that are not on the public internet, unless the owner allowed it
+/// (`MUSEQ_ALLOW_PRIVATE_STATIONS`). Domain names are resolved and every address must be public.
+/// Note: the connection resolves the name again, so a hostile DNS server could still answer
+/// differently the second time; stations are added by the owner only.
+pub async fn host_allowed(url: &url::Url, allow_private: bool) -> Result<(), String> {
+    if allow_private {
+        return Ok(());
+    }
+    let port = url.port_or_known_default().unwrap_or(80);
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => is_public(ip.into())
+            .then_some(())
+            .ok_or_else(|| "address is not public".to_string()),
+        Some(url::Host::Ipv6(ip)) => is_public(ip.into())
+            .then_some(())
+            .ok_or_else(|| "address is not public".to_string()),
+        Some(url::Host::Domain(d)) => {
+            let addrs: Vec<_> =
+                tokio::time::timeout(Duration::from_secs(5), tokio::net::lookup_host((d, port)))
+                    .await
+                    .map_err(|_| "DNS lookup timed out".to_string())?
+                    .map_err(|e| format!("DNS lookup failed: {e}"))?
+                    .collect();
+            if addrs.is_empty() {
+                Err("host did not resolve".into())
+            } else if addrs.iter().all(|a| is_public(a.ip())) {
+                Ok(())
+            } else {
+                Err("address is not public".into())
+            }
+        }
+        None => Err("no host".into()),
+    }
 }
 
 fn category_of(c: &str) -> String {
@@ -189,6 +265,16 @@ pub async fn add_station(State(s): State<AppState>, Json(b): Json<NewStation>) -
         return err(StatusCode::BAD_REQUEST, "url must be an http(s) stream URL");
     }
     let category = category_of(b.category.as_deref().unwrap_or("Other"));
+    if let Some(parsed) = parse_stream_url(&url)
+        && let Err(why) = host_allowed(&parsed, s.allow_private_stations).await
+    {
+        return err(
+            StatusCode::BAD_REQUEST,
+            &format!(
+                "that address is not allowed ({why}); set MUSEQ_ALLOW_PRIVATE_STATIONS=1 to use stations on your own network"
+            ),
+        );
+    }
     let conn = db::lock(&s.db);
     let inserted = conn.execute(
         "INSERT INTO station(name, category, url, source, search_text) VALUES(?1,?2,?3,'manual',?4)
@@ -241,8 +327,10 @@ pub async fn delete_station(State(s): State<AppState>, Path(id): Path<i64>) -> R
 
 // ---- liveness check ---------------------------------------------------------------------
 
-const CHECK_TIMEOUT: Duration = Duration::from_secs(8);
+/// One whole check (all redirect hops and the fallback) must finish within this.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 const CONCURRENCY: usize = 8;
+const MAX_REDIRECTS: usize = 3;
 
 #[derive(Debug, PartialEq)]
 pub struct Verdict {
@@ -257,80 +345,154 @@ fn dead(msg: impl Into<String>) -> Verdict {
     }
 }
 
-fn audio_like(content_type: &str, url: &str) -> bool {
+fn alive() -> Verdict {
+    Verdict {
+        alive: true,
+        error: None,
+    }
+}
+
+enum CtKind {
+    Audio,   // clearly audio or a playlist: trust it
+    Unknown, // empty or generic binary: the first bytes must look like audio
+    Other,   // text/html and friends
+}
+
+fn classify(content_type: &str, url: &str) -> CtKind {
     let ct = content_type.to_ascii_lowercase();
     let path = url
         .split(['?', '#'])
         .next()
         .unwrap_or(url)
         .to_ascii_lowercase();
-    ct.is_empty()
-        || [
-            "audio/",
-            "application/ogg",
-            "application/octet-stream",
-            "mpegurl",
-            "binary/octet-stream",
-            "video/mp2t",
-            "x-scpls",
-            "application/vnd.apple",
-        ]
-        .iter()
-        .any(|k| ct.contains(k))
+    if [
+        "audio/",
+        "application/ogg",
+        "mpegurl",
+        "x-scpls",
+        "application/vnd.apple",
+    ]
+    .iter()
+    .any(|k| ct.contains(k))
         || path.ends_with(".m3u8")
         || path.ends_with(".pls")
         || path.ends_with(".m3u")
-}
-
-/// Old Shoutcast servers answer `ICY 200 OK`, which HTTP clients reject; check those by hand.
-async fn check_raw_http(url: &str) -> Verdict {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let Some(rest) = url.strip_prefix("http://") else {
-        return dead("not plain http");
-    };
-    let (hostport, path) = rest
-        .split_once('/')
-        .map(|(h, p)| (h, format!("/{p}")))
-        .unwrap_or((rest, "/".into()));
-    let addr = if hostport.contains(':') {
-        hostport.to_string()
+    {
+        CtKind::Audio
+    } else if ct.is_empty() || ct.contains("octet-stream") || ct.contains("video/mp2t") {
+        CtKind::Unknown
     } else {
-        format!("{hostport}:80")
-    };
-    let host = hostport.split(':').next().unwrap_or(hostport);
-    let run = async {
-        let mut sock = tokio::net::TcpStream::connect(&addr)
-            .await
-            .map_err(|e| e.to_string())?;
-        let req = format!("GET {path} HTTP/1.0\\r\\nHost: {host}\\r\\nUser-Agent: museq-station-check\\r\\nAccept: */*\\r\\n\\r\\n").replace("\\r\\n", "\r\n");
-        sock.write_all(req.as_bytes())
-            .await
-            .map_err(|e| e.to_string())?;
-        let mut buf = [0u8; 256];
-        let n = sock.read(&mut buf).await.map_err(|e| e.to_string())?;
-        Ok::<String, String>(String::from_utf8_lossy(&buf[..n]).into_owned())
-    };
-    match tokio::time::timeout(CHECK_TIMEOUT, run).await {
-        Err(_) => dead("timed out"),
-        Ok(Err(e)) => dead(e),
-        Ok(Ok(head)) => {
-            let first = head.lines().next().unwrap_or("");
-            if first.starts_with("ICY 200") || first.contains(" 200") {
-                Verdict {
-                    alive: true,
-                    error: None,
-                }
-            } else {
-                dead(format!(
-                    "unexpected reply: {}",
-                    first.chars().take(60).collect::<String>()
-                ))
-            }
-        }
+        CtKind::Other
     }
 }
 
-/// The reqwest message alone is "error sending request"; the useful part is further down the chain.
+/// Do these first bytes look like an audio stream or a playlist?
+pub fn sniff_audio(b: &[u8]) -> bool {
+    b.starts_with(b"ID3")
+        || b.starts_with(b"OggS")
+        || b.starts_with(b"fLaC")
+        || b.starts_with(b"RIFF")
+        || b.starts_with(b"#EXTM3U")
+        || b.starts_with(b"[playlist")
+        || b.starts_with(b"FLV")
+        || (b.len() >= 2 && b[0] == 0xFF && (b[1] & 0xE0) == 0xE0) // MP3/AAC frame sync
+        || (b.len() >= 8 && &b[4..8] == b"ftyp")
+        || b.first() == Some(&0x47) // MPEG transport stream
+}
+
+fn verdict_for(ct: &str, url: &str, first: &[u8]) -> Verdict {
+    if first.is_empty() {
+        return dead("connected but sent no audio");
+    }
+    match classify(ct, url) {
+        CtKind::Audio => alive(),
+        CtKind::Unknown if sniff_audio(first) => alive(),
+        CtKind::Unknown => dead("sent bytes that do not look like audio"),
+        CtKind::Other => dead(format!("not audio (content-type {ct})")),
+    }
+}
+
+/// Old Shoutcast servers answer `ICY 200 OK`, which HTTP clients reject; read those by hand.
+/// Only used for plain http, and only when the HTTP client could not parse the reply.
+async fn check_raw_http(url: &url::Url) -> Verdict {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let Some(host) = url.host_str() else {
+        return dead("no host");
+    };
+    let port = url.port_or_known_default().unwrap_or(80);
+    let target = &url[url::Position::BeforePath..url::Position::AfterQuery];
+    let run = async {
+        let mut sock = tokio::net::TcpStream::connect((host.trim_matches(['[', ']']), port))
+            .await
+            .map_err(|e| e.to_string())?;
+        let req = format!(
+            "GET {target} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: museq-station-check\r\nAccept: */*\r\n\r\n"
+        );
+        sock.write_all(req.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        // read until the end of the headers plus at least one body byte, or 4 KB
+        while buf.len() < 4096 {
+            let n = sock.read(&mut chunk).await.map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n")
+                && buf.len() > end + 4
+            {
+                break;
+            }
+        }
+        Ok::<Vec<u8>, String>(buf)
+    };
+    let buf = match run.await {
+        Ok(b) => b,
+        Err(e) => return dead(e),
+    };
+    let end = buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4)
+        .unwrap_or(buf.len());
+    let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+    let body = &buf[end.min(buf.len())..];
+    let first = head.lines().next().unwrap_or("");
+    let ok_status = first.starts_with("ICY 200")
+        || first.starts_with("HTTP/1.0 200")
+        || first.starts_with("HTTP/1.1 200");
+    if !ok_status {
+        return dead(format!(
+            "unexpected reply: {}",
+            first.chars().take(40).collect::<String>()
+        ));
+    }
+    if first.starts_with("ICY") {
+        return if body.is_empty() {
+            dead("connected but sent no audio")
+        } else {
+            alive()
+        };
+    }
+    let ct = head
+        .lines()
+        .find_map(|l| {
+            l.to_ascii_lowercase()
+                .strip_prefix("content-type:")
+                .map(|v| v.trim().to_string())
+        })
+        .unwrap_or_default();
+    verdict_for(&ct, url.as_str(), body)
+}
+
+enum Hop {
+    Done(Verdict),
+    Redirect(String),
+    ParseTrouble(String), // the reply was not valid HTTP: maybe an ICY server
+}
+
 fn error_chain(e: &reqwest::Error) -> String {
     use std::error::Error;
     let mut parts = vec![e.to_string()];
@@ -342,58 +504,94 @@ fn error_chain(e: &reqwest::Error) -> String {
         }
         src = s.source();
     }
-    let joined = parts.join(": ");
-    // keep it short and drop the URL (it is already in the row)
-    joined.chars().take(160).collect()
+    parts.join(": ").chars().take(160).collect()
 }
 
-pub async fn check_one(client: &reqwest::Client, url: &str) -> Verdict {
-    let fetch = async {
-        let mut resp = client
-            .get(url)
-            .header("User-Agent", "museq-station-check")
-            .header("Icy-MetaData", "0")
-            .send()
-            .await?;
-        let status = resp.status();
-        let ct = resp
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        if !(status.is_success()) {
-            return Ok::<Verdict, reqwest::Error>(dead(format!("HTTP {}", status.as_u16())));
-        }
-        if !audio_like(&ct, url) {
-            return Ok(dead(format!("not audio (content-type {ct})")));
-        }
-        // A live stream must actually send bytes.
-        match resp.chunk().await? {
-            Some(c) if !c.is_empty() => Ok(Verdict {
-                alive: true,
-                error: None,
-            }),
-            _ => Ok(dead("connected but sent no audio")),
+async fn fetch_once(client: &reqwest::Client, url: &str) -> Hop {
+    let mut resp = match client
+        .get(url)
+        .header("User-Agent", "museq-station-check")
+        .header("Icy-MetaData", "0")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let chain = error_chain(&e);
+            let low = chain.to_ascii_lowercase();
+            return if low.contains("invalid http version")
+                || low.contains("invalid status")
+                || low.contains("malformed")
+            {
+                Hop::ParseTrouble(chain)
+            } else {
+                Hop::Done(dead(chain))
+            };
         }
     };
-    match tokio::time::timeout(CHECK_TIMEOUT, fetch).await {
-        Err(_) => dead("timed out"),
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => {
-            if url.starts_with("http://") {
-                let raw = check_raw_http(url).await;
-                if raw.alive {
-                    return raw;
-                }
-            }
-            dead(error_chain(&e))
-        }
+    let status = resp.status();
+    if status.is_redirection() {
+        return match resp.headers().get("location").and_then(|v| v.to_str().ok()) {
+            Some(loc) => Hop::Redirect(loc.to_string()),
+            None => Hop::Done(dead(format!("HTTP {} without a location", status.as_u16()))),
+        };
+    }
+    if !status.is_success() {
+        return Hop::Done(dead(format!("HTTP {}", status.as_u16())));
+    }
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    match resp.chunk().await {
+        Ok(Some(first)) => Hop::Done(verdict_for(&ct, url, &first)),
+        Ok(None) => Hop::Done(dead("connected but sent no audio")),
+        Err(e) => Hop::Done(dead(error_chain(&e))),
     }
 }
 
+/// Check one stream: follow up to three redirects by hand (each hop is checked against the
+/// host policy), within one overall deadline.
+pub async fn check_one(client: &reqwest::Client, start: &str, allow_private: bool) -> Verdict {
+    let run = async {
+        let mut current = start.to_string();
+        for _ in 0..=MAX_REDIRECTS {
+            let Some(parsed) = parse_stream_url(&current) else {
+                return dead("not a usable stream address");
+            };
+            if let Err(why) = host_allowed(&parsed, allow_private).await {
+                return dead(why);
+            }
+            match fetch_once(client, parsed.as_str()).await {
+                Hop::Done(v) => return v,
+                Hop::Redirect(loc) => match parsed.join(&loc) {
+                    Ok(next) => current = next.to_string(),
+                    Err(_) => return dead("bad redirect address"),
+                },
+                Hop::ParseTrouble(chain) => {
+                    return if parsed.scheme() == "http" {
+                        let raw = check_raw_http(&parsed).await;
+                        if raw.alive { raw } else { dead(chain) }
+                    } else {
+                        dead(chain)
+                    };
+                }
+            }
+        }
+        dead("too many redirects")
+    };
+    tokio::time::timeout(CHECK_TIMEOUT, run)
+        .await
+        .unwrap_or_else(|_| dead("timed out"))
+}
+
 /// Check every station (a few at a time), recording the verdict. Never panics on a bad URL.
-pub async fn check_all(db: std::sync::Arc<std::sync::Mutex<Connection>>) -> serde_json::Value {
+pub async fn check_all(
+    db: std::sync::Arc<std::sync::Mutex<Connection>>,
+    allow_private: bool,
+) -> serde_json::Value {
     let list: Vec<(i64, String)> = {
         let conn = db::lock(&db);
         conn.prepare("SELECT id, url FROM station ORDER BY id")
@@ -402,7 +600,7 @@ pub async fn check_all(db: std::sync::Arc<std::sync::Mutex<Connection>>) -> serd
     };
     let client = match reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
-        .redirect(reqwest::redirect::Policy::limited(3))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
     {
         Ok(c) => c,
@@ -411,10 +609,14 @@ pub async fn check_all(db: std::sync::Arc<std::sync::Mutex<Connection>>) -> serd
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(CONCURRENCY));
     let mut tasks = tokio::task::JoinSet::new();
     for (id, url) in list {
-        let (client, sem, db) = (client.clone(), sem.clone(), db.clone());
+        // take the permit before spawning, so a huge list never creates thousands of tasks at once
+        let Ok(permit) = sem.clone().acquire_owned().await else {
+            break;
+        };
+        let (client, db) = (client.clone(), db.clone());
         tasks.spawn(async move {
-            let _permit = sem.acquire().await;
-            let v = check_one(&client, &url).await;
+            let _permit = permit;
+            let v = check_one(&client, &url, allow_private).await;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
@@ -426,12 +628,12 @@ pub async fn check_all(db: std::sync::Arc<std::sync::Mutex<Connection>>) -> serd
             v.alive
         });
     }
-    let (mut alive, mut dead_n) = (0u32, 0u32);
+    let (mut ok, mut bad) = (0u32, 0u32);
     while let Some(r) = tasks.join_next().await {
         match r {
-            Ok(true) => alive += 1,
-            _ => dead_n += 1,
+            Ok(true) => ok += 1,
+            _ => bad += 1,
         }
     }
-    json!({"checked": alive + dead_n, "alive": alive, "dead": dead_n})
+    json!({"checked": ok + bad, "alive": ok, "dead": bad})
 }

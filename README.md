@@ -41,7 +41,7 @@ curl -H "Authorization: Bearer $T" 'http://127.0.0.1:8080/v1/tracks?q=something'
 
 `GET /v1/health` is open. Everything else needs `Authorization: Bearer <token>`. The port is published on localhost only; change that in `compose.yaml` on purpose if you want LAN or Tailscale access. Podman should work with the same `Containerfile` but I haven't tested it.
 
-From source (recent Rust toolchain): `MUSEQ_TOKEN=... MUSEQ_LIBRARY=./music cargo run -p museq-server`. Settings: `MUSEQ_BIND` (default `127.0.0.1:8080`), `MUSEQ_LIBRARY`, `MUSEQ_DB`, `MUSEQ_TOKEN` or `MUSEQ_TOKEN_FILE`.
+From source (recent Rust toolchain): `MUSEQ_TOKEN=... MUSEQ_LIBRARY=./music cargo run -p museq-server`. Settings: `MUSEQ_BIND` (default `127.0.0.1:8080`), `MUSEQ_LIBRARY`, `MUSEQ_DB`, `MUSEQ_TOKEN` or `MUSEQ_TOKEN_FILE`, `MUSEQ_STATIONS_SEED` (comma-separated station list files), `MUSEQ_ALLOW_PRIVATE_STATIONS=1` (allow radio stations on your own network; refused by default).
 
 ## Layout
 

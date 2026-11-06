@@ -22,7 +22,7 @@ Result: **no existing plugin talks to Mus-Eq**, which is expected, so we need a 
 2. A request helper that runs `curl` with the token passed on stdin, one request in flight at a time. This is what `contrib/now-playing.sh` already does.
 3. Poll `GET /v1/session` every few seconds, staying quiet about brief failures (show a fault only after about 45 s of continuous failure). Commands go to `POST /v1/session`. A 409 means "no player is connected" and is shown as such.
 4. A bar item (play/pause glyph and `artist - title`; click toggles, middle skips) and a panel with transport, volume and a station list.
-5. **Gaps in our API to close:** a command that starts a station remotely (`station_id` on `play`), cover art for the current track, and position in the session.
+5. **Gaps in our API to close:** cover art for the current track, and position in the session. (Starting a station remotely is done: `play` with a `station_id` or `track_id`.)
 6. **MPRIS:** the web client cannot publish MPRIS. A small helper (or the later desktop client) that publishes an MPRIS player mirroring `/v1/session` would make Omarchy's own media widget, media keys and every MPRIS-based plugin work with Mus-Eq unchanged.
 
 ## Best candidates (all MIT unless noted; copy with notice, keep copyright lines)
@@ -53,5 +53,4 @@ Not reusable as code: Omafin, Omamich and Celestune Bar (GPL-3: ideas only), and
 ## Follow-up work
 
 - A separate repository for the first-party Mus-Eq Omarchy plugin (own roadmap item, after the API gaps above).
-- Add the remote "play this station" command and station reporting to the session API (phase 2).
 - An MPRIS helper (phase 4, with the desktop client).

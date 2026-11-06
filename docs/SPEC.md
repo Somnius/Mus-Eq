@@ -55,7 +55,8 @@ Rules: byte identity = sha256. Song identity for dedupe = fingerprint (later); u
 ## API conventions (the contract is `docs/openapi.yaml`)
 - JSON over HTTP; one WebSocket (`/v1/events`) for session and job events.
 - Audio ids are **file ids**. Playlists and the session refer to track ids; the server picks the track's preferred file.
-- `POST /v1/jobs` with `kind` scan|fetch|tag|fingerprint; `fetch` answers 403 unless enabled in config.
+- `POST /v1/jobs` with `kind` scan|check_stations|fetch|tag|fingerprint; `fetch` answers 403 unless enabled in config; one job of a kind at a time (409 otherwise).
+- Station addresses: a station URL must be http(s) with a host and no credentials. By default loopback, private, link-local (including the cloud metadata address), carrier-grade NAT and unique-local addresses are refused, both when adding a station and in every hop of the liveness check (redirects are followed by hand, at most 3, within one 10 s deadline). Radio on your own network needs `MUSEQ_ALLOW_PRIVATE_STATIONS=1`. Limit: a name is resolved again when connecting, so a hostile DNS server could answer differently the second time; stations are added by the owner only.
 - Errors are `{ "error": "message" }` with a normal HTTP status, including unknown `/v1/...` paths. Malformed ids or bodies that axum rejects before our code runs (a non-numeric `{id}`, invalid JSON) still answer with its plain-text 400/422.
 - Implemented so far: health, login/logout, tracks, audio (Range), playlists, scan jobs, session + events, skins, stations (list, add, delete, liveness check job, remote play). Search is case- and accent-insensitive (Greek tonos and final sigma fold) through a `search_text` column.
 
@@ -66,7 +67,7 @@ Rules: byte identity = sha256. Song identity for dedupe = fingerprint (later); u
 | Phase | Added to the image |
 |---|---|
 | 1 | server binary only (symphonia reads tags and durations; library path and token via env/config) |
-| 2 | `data/stations/` seed (currently excluded by `.dockerignore`; fix then) |
+| 2 | `data/stations/` seed lists (shipped in the image, imported at startup) |
 | 3 | `fpcalc`, `yt-dlp` (pinned, flag off by default) |
 | 5 | `ffmpeg` (apt or a pinned LGPL build with checksum) |
 | 6 | nothing new (libopus decode in-process) |

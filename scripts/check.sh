@@ -3,7 +3,8 @@
 # Keeps the machine under its CPU cap (24 of 32 threads, nice 10).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-run() { taskset -c 0-23 nice -n 10 "$@"; }
+# keep the machine under its CPU cap: pin to 24 cores when there are that many, always nice
+if [ "$(nproc)" -ge 24 ]; then run() { taskset -c 0-23 nice -n 10 "$@"; }; else run() { nice -n 10 "$@"; }; fi
 run cargo fmt --all --check
 run cargo clippy --all-targets -- -D warnings
 run cargo test
@@ -14,7 +15,7 @@ python3 scripts/readme-badges.py --check
 mkdir -p .work/tmp; work=$(mktemp -d "$PWD/.work/tmp/check.XXXXXX"); trap 'kill ${pid:-0} 2>/dev/null || true; rm -rf "$work"' EXIT
 token=$(head -c 24 /dev/urandom | base64 | tr -d '/+=')
 port=${MUSEQ_TEST_PORT:-8096}
-MUSEQ_TOKEN=$token MUSEQ_BIND=127.0.0.1:$port MUSEQ_LIBRARY=$PWD/crates/museq-server/tests/fixtures/lib \
+MUSEQ_ALLOW_PRIVATE_STATIONS=1 MUSEQ_TOKEN=$token MUSEQ_BIND=127.0.0.1:$port MUSEQ_LIBRARY=$PWD/crates/museq-server/tests/fixtures/lib \
   MUSEQ_DB=$work/db MUSEQ_SKINS_DIR=$work/skins MUSEQ_WEB_DIR=$PWD/web/dist MUSEQ_STATIONS_SEED=$PWD/crates/museq-server/tests/fixtures/stations-seed.txt ./target/debug/museq-server >"$work/log" 2>&1 &
 pid=$!
 sleep 1

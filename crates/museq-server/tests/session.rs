@@ -21,6 +21,7 @@ fn fixtures() -> PathBuf {
 
 fn state(web: Option<PathBuf>) -> api::AppState {
     let skins = tempfile::tempdir().unwrap().keep();
+    // the tests use made-up station addresses, so allow private/unresolvable hosts here
     api::AppState::new(
         db::open_in_memory().unwrap(),
         fixtures(),
@@ -28,6 +29,7 @@ fn state(web: Option<PathBuf>) -> api::AppState {
         skins,
         web,
     )
+    .allow_private_stations(true)
 }
 
 async fn send(app: &Router, req: Request<Body>) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {

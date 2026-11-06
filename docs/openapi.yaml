@@ -295,7 +295,7 @@ paths:
       summary: List stations. External stations carry the upstream url and are played by the client directly, never proxied.
       parameters:
         - { name: q, in: query, schema: { type: string }, description: "Case- and accent-insensitive name search" }
-        - { name: category, in: query, schema: { type: string, enum: [Music, News, Sports, Other] } }
+        - { name: category, in: query, schema: { type: string }, description: "Music, News, Sports or Other (case-insensitive; anything else counts as Other)" }
         - { name: alive, in: query, schema: { type: string, enum: ["true", "false", unknown] } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
         - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
@@ -316,7 +316,7 @@ paths:
     post:
       tags: [stations]
       operationId: addStation
-      summary: Add a station by stream URL (http or https only)
+      summary: Add a station by stream URL (http or https only, with a host, no credentials in the URL). Loopback, private and link-local addresses are refused unless the server runs with MUSEQ_ALLOW_PRIVATE_STATIONS=1.
       requestBody:
         required: true
         content:
@@ -545,7 +545,7 @@ components:
         kind: { type: string, enum: [external] , description: "library and live stations arrive with phases 5 and 6" }
         category: { type: string, enum: [Music, News, Sports, Other] }
         url: { type: string, format: uri }
-        source: { type: string, description: "manual, trayfm or museq" }
+        source: { type: string, description: "Where it came from: manual, or the name of the seed list file (for example trayfm or museq)" }
         alive: { type: [boolean, "null"], description: "null = never checked" }
         checked_at: { type: [integer, "null"], description: "Unix seconds of the last liveness check" }
         error: { type: [string, "null"], description: "Why the last check failed" }
