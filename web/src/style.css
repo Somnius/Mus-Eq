@@ -18,3 +18,11 @@ button { cursor:pointer; } button:hover { border-color:var(--accent); }
 #login-error { color:#e57373; min-height:1.2em; margin:0; }
 #webamp { position:fixed; inset:0; pointer-events:none; } #webamp > * { pointer-events:auto; }
 @media (max-width:600px) { #library { padding:.5rem; } }
+#stations { margin-top:1.5rem; } #stations h2 { font-size:1rem; margin:0 0 .5rem; }
+.row { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; } .row input[type=search] { flex:1 1 12rem; }
+select { font:inherit; padding:.5rem; border:1px solid var(--line); border-radius:.4rem; background:transparent; color:inherit; }
+#st-audio { width:100%; margin:.5rem 0; }
+#st-list { list-style:none; padding:0; margin:.5rem 0; max-height:24rem; overflow:auto; }
+#st-list li { display:flex; gap:.5rem; align-items:center; padding:.3rem 0; border-bottom:1px solid var(--line); }
+#st-list .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dot { width:.6rem; height:.6rem; border-radius:50%; background:var(--muted); flex:none; } .dot.live { background:var(--accent); } .dot.dead { background:#e57373; }

@@ -1,0 +1,3 @@
+# tiny seed list used by the browser smoke test
+Seed One|Music|http://127.0.0.1:9/one
+Seed Two|News|http://127.0.0.1:9/two

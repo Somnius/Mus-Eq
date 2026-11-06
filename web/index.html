@@ -26,6 +26,20 @@
       </header>
       <p id="status" role="status"></p>
       <ul id="tracks"></ul>
+      <section id="stations">
+        <h2>Radio stations</h2>
+        <div class="row">
+          <input id="st-search" type="search" placeholder="Search stations">
+          <select id="st-cat" aria-label="Category">
+            <option value="">All</option><option>Music</option><option>News</option><option>Sports</option><option>Other</option>
+          </select>
+          <label><input id="st-live" type="checkbox"> live only</label>
+          <button id="st-check" type="button">Check streams</button>
+        </div>
+        <p id="st-status" role="status"></p>
+        <audio id="st-audio" controls preload="none"></audio>
+        <ul id="st-list"></ul>
+      </section>
       <details id="skins">
         <summary>Skins</summary>
         <ul id="skin-list"></ul>

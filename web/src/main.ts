@@ -1,6 +1,6 @@
 import Webamp from "webamp";
 import type { Track as WebampTrack } from "webamp";
-import { Unauthorized, api, audioUrl, type SessionSnapshot, type Track } from "./api";
+import { Unauthorized, api, audioUrl, type SessionSnapshot, type Station, type Track } from "./api";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const clientId = crypto.randomUUID();
@@ -37,6 +37,7 @@ async function boot() {
   await startPlayer();
   connectEvents();
   await refreshSkins();
+  await refreshStations();
 }
 
 async function refreshTracks(q: string) {
@@ -98,6 +99,7 @@ async function startPlayer() {
   const report = (force = false) => {
     if (!webamp) return;
     const status = webamp.getMediaStatus();
+    if (status === "PLAYING" && !stAudio().paused) stAudio().pause();
     const state = status === "PLAYING" ? "playing" : status === "PAUSED" ? "paused" : "stopped";
     const key = `${state}|${currentTrackId ?? ""}`;
     const now = Date.now();
@@ -124,6 +126,15 @@ function connectEvents() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data as string) as { type: string; action?: string; target?: string | null; track_id?: string | null; volume?: number | null; session?: SessionSnapshot };
     if (msg.type !== "command" || msg.target !== clientId || !webamp) return;
+    // a station is the active source if it is playing, or paused after having played while Webamp is not
+    const stationActive = currentStation !== null && (!stAudio().paused || (stAudio().currentTime > 0 && webamp.getMediaStatus() !== "PLAYING"));
+    if (stationActive) {
+      const a = stAudio();
+      if (msg.action === "play") void a.play();
+      else if (msg.action === "pause") a.pause();
+      else if (msg.action === "volume" && typeof msg.volume === "number") a.volume = msg.volume;
+      return;
+    }
     switch (msg.action) {
       case "play": webamp.play(); break;
       case "pause": webamp.pause(); break;
@@ -133,6 +144,63 @@ function connectEvents() {
     }
   };
   ws.onclose = () => setTimeout(() => { if (!$("app").hidden) connectEvents(); }, 3000);
+}
+
+// ---- radio stations ------------------------------------------------------------------------
+// External stations are played by the browser straight from the station (the server never relays
+// them). A plain <audio> element is used because most streams don't send CORS headers, which
+// Webamp's loader needs.
+
+const stAudio = () => $("st-audio") as HTMLAudioElement;
+let currentStation: Station | null = null;
+
+function reportStation() {
+  const a = stAudio();
+  if (!currentStation) return;
+  const state = a.paused ? (a.currentTime > 0 ? "paused" : "stopped") : "playing";
+  void api.report({ client_id: clientId, state, station_id: currentStation.id });
+}
+
+function playStation(s: Station) {
+  const a = stAudio();
+  webamp?.pause();
+  currentStation = s;
+  a.src = s.url;
+  $("st-status").textContent = `Connecting to ${s.name}…`;
+  a.play().catch((e: Error) => { $("st-status").textContent = `Could not play ${s.name}: ${e.message}`; });
+}
+
+for (const ev of ["playing", "pause", "ended"]) stAudio().addEventListener(ev, () => {
+  if (ev === "playing" && currentStation) $("st-status").textContent = `Playing ${currentStation.name}`;
+  reportStation();
+});
+stAudio().addEventListener("error", () => {
+  if (currentStation) $("st-status").textContent = `${currentStation.name} could not be played in the browser (the stream may be down, or blocked as mixed content on an HTTPS page).`;
+});
+
+async function refreshStations() {
+  const q = ($("st-search") as HTMLInputElement).value;
+  const cat = ($("st-cat") as HTMLSelectElement).value;
+  const live = ($("st-live") as HTMLInputElement).checked;
+  const { items, total } = await api.stations(q, cat, live);
+  if (!currentStation) $("st-status").textContent = total === 0 ? "No stations match." : `${total} station${total === 1 ? "" : "s"}`;
+  $("st-list").replaceChildren(...items.map((s) => {
+    const li = document.createElement("li");
+    const dot = document.createElement("span");
+    dot.className = `dot ${s.alive === true ? "live" : s.alive === false ? "dead" : ""}`;
+    dot.title = s.alive === null ? "not checked yet" : s.alive ? "stream answered" : (s.error ?? "stream is down");
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = s.name;
+    const play = document.createElement("button");
+    play.textContent = "Play";
+    const blocked = location.protocol === "https:" && s.url.startsWith("http:");
+    play.disabled = blocked;
+    if (blocked) play.title = "Plain-HTTP streams are blocked on HTTPS pages";
+    play.onclick = () => playStation(s);
+    li.append(dot, name, play);
+    return li;
+  }));
 }
 
 // ---- UI wiring ----------------------------------------------------------------------------
@@ -157,6 +225,24 @@ $("scan").addEventListener("click", async () => {
     await new Promise((r) => setTimeout(r, 500));
   }
   await refreshTracks(($("search") as HTMLInputElement).value);
+});
+let stTimer: number | undefined;
+const stChanged = () => { clearTimeout(stTimer); stTimer = window.setTimeout(() => void refreshStations(), 200); };
+$("st-search").addEventListener("input", stChanged);
+$("st-cat").addEventListener("change", stChanged);
+$("st-live").addEventListener("change", stChanged);
+$("st-check").addEventListener("click", async () => {
+  $("st-status").textContent = "Checking streams…";
+  const { id } = await api.checkStations().catch((e: Error) => { $("st-status").textContent = e.message; return { id: "" }; });
+  for (let i = 0; id && i < 240; i++) {
+    const j = await api.job(id);
+    if (j.state === "done" || j.state === "failed") {
+      $("st-status").textContent = j.state === "done" ? `Checked ${j.result?.checked ?? "?"} streams: ${j.result?.alive ?? "?"} answered.` : `Check failed: ${j.error ?? ""}`;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  await refreshStations();
 });
 $("logout").addEventListener("click", async () => { await api.logout(); location.reload(); });
 $("skin-file").addEventListener("change", async (e) => {

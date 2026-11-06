@@ -15,7 +15,7 @@ mkdir -p .work/tmp; work=$(mktemp -d "$PWD/.work/tmp/check.XXXXXX"); trap 'kill 
 token=$(head -c 24 /dev/urandom | base64 | tr -d '/+=')
 port=${MUSEQ_TEST_PORT:-8096}
 MUSEQ_TOKEN=$token MUSEQ_BIND=127.0.0.1:$port MUSEQ_LIBRARY=$PWD/crates/museq-server/tests/fixtures/lib \
-  MUSEQ_DB=$work/db MUSEQ_SKINS_DIR=$work/skins MUSEQ_WEB_DIR=$PWD/web/dist ./target/debug/museq-server >"$work/log" 2>&1 &
+  MUSEQ_DB=$work/db MUSEQ_SKINS_DIR=$work/skins MUSEQ_WEB_DIR=$PWD/web/dist MUSEQ_STATIONS_SEED=$PWD/crates/museq-server/tests/fixtures/stations-seed.txt ./target/debug/museq-server >"$work/log" 2>&1 &
 pid=$!
 sleep 1
 curl -fsS -X POST -H "Authorization: Bearer $token" -H 'content-type: application/json' -d '{"kind":"scan"}' "http://127.0.0.1:$port/v1/jobs" >/dev/null

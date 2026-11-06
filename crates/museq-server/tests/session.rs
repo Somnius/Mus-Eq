@@ -578,3 +578,66 @@ async fn unknown_api_paths_are_json_404_even_with_the_web_client_served() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_station_can_be_reported_instead_of_a_track() {
+    let app = api::router(state(None));
+    let tid = first_track_id(&app).await;
+    let (_, _, b) = send(
+        &app,
+        bearer(
+            Method::POST,
+            "/v1/stations",
+            Some(json!({"name": "Test FM", "url": "http://a.example/s", "category": "News"})),
+        ),
+    )
+    .await;
+    let sid = serde_json::from_slice::<Value>(&b).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let report = |extra: Value| {
+        let mut body = json!({"action": "report", "client_id": "c1", "state": "playing"});
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        bearer(Method::POST, "/v1/session", Some(body))
+    };
+    assert_eq!(
+        send(&app, report(json!({"station_id": "99999"}))).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(&app, report(json!({"station_id": "x"}))).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        send(&app, report(json!({"station_id": sid, "track_id": tid})))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+
+    assert_eq!(
+        send(&app, report(json!({"station_id": sid}))).await.0,
+        StatusCode::OK
+    );
+    let (_, _, b) = send(&app, bearer(Method::GET, "/v1/session", None)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(
+        (v["station"]["name"].as_str(), v["track"].clone()),
+        (Some("Test FM"), Value::Null)
+    );
+
+    // reporting a track afterwards replaces the station
+    assert_eq!(
+        send(&app, report(json!({"track_id": tid}))).await.0,
+        StatusCode::OK
+    );
+    let (_, _, b) = send(&app, bearer(Method::GET, "/v1/session", None)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(
+        (v["station"].clone(), v["track"]["id"].as_str()),
+        (Value::Null, Some(tid.as_str()))
+    );
+}

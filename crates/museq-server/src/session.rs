@@ -20,6 +20,7 @@ use crate::db;
 pub struct Session {
     pub state: String,
     pub track_id: Option<i64>,
+    pub station_id: Option<i64>,
     pub position_ms: i64,
     pub volume: f64,
     /// Id of the client that last reported; commands are addressed to it.
@@ -31,6 +32,7 @@ impl Default for Session {
         Self {
             state: "stopped".into(),
             track_id: None,
+            station_id: None,
             position_ms: 0,
             volume: 1.0,
             client_id: None,
@@ -51,9 +53,28 @@ fn session_json(s: &AppState) -> Value {
             .ok()
             .flatten()
     });
+    let station = sess.station_id.and_then(|id| {
+        db::lock(&s.db)
+            .query_row(
+                "SELECT id, name, category, url FROM station WHERE id=?1",
+                [id],
+                |r| {
+                    Ok(json!({
+                        "id": r.get::<_, i64>(0)?.to_string(),
+                        "name": r.get::<_, String>(1)?,
+                        "category": r.get::<_, String>(2)?,
+                        "url": r.get::<_, String>(3)?,
+                    }))
+                },
+            )
+            .optional()
+            .ok()
+            .flatten()
+    });
     json!({
         "state": sess.state,
         "track": track,
+        "station": station,
         "position_ms": sess.position_ms,
         "volume": sess.volume,
         "client_id": sess.client_id,
@@ -68,6 +89,7 @@ pub async fn get_session(State(s): State<AppState>) -> Response {
 pub struct SessionBody {
     action: String,
     track_id: Option<String>,
+    station_id: Option<String>,
     volume: Option<f64>,
     position_ms: Option<i64>,
     state: Option<String>,
@@ -110,13 +132,41 @@ pub async fn post_session(State(s): State<AppState>, Json(b): Json<SessionBody>)
                     }
                 }
             };
+            let station_id = match &b.station_id {
+                None => None,
+                Some(t) => {
+                    let Ok(id) = t.parse::<i64>() else {
+                        return err(StatusCode::BAD_REQUEST, "station_id is not a valid id");
+                    };
+                    match db::lock(&s.db)
+                        .query_row("SELECT 1 FROM station WHERE id=?1", [id], |_| Ok(()))
+                        .optional()
+                    {
+                        Ok(Some(())) => Some(id),
+                        Ok(None) => return err(StatusCode::NOT_FOUND, "no such station"),
+                        Err(e) => return internal(e),
+                    }
+                }
+            };
+            if track_id.is_some() && station_id.is_some() {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "report a track or a station, not both",
+                );
+            }
             {
                 let mut sess = s.session.lock().unwrap_or_else(|e| e.into_inner());
+                // a station replaces the track and the other way round
+                if station_id.is_some() {
+                    sess.station_id = station_id;
+                    sess.track_id = None;
+                }
                 if let Some(st) = b.state {
                     sess.state = st;
                 }
                 if b.track_id.is_some() {
                     sess.track_id = track_id;
+                    sess.station_id = None;
                 }
                 if let Some(p) = b.position_ms {
                     sess.position_ms = p.max(0);

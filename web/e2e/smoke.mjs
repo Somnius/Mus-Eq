@@ -1,6 +1,25 @@
 // Headless smoke test of the built client against a real server.
 // Usage: MUSEQ_URL=http://127.0.0.1:8099 MUSEQ_TOKEN=... node e2e/smoke.mjs   (CHROMIUM=/usr/bin/chromium)
 import { chromium } from "playwright-core";
+import http from "node:http";
+
+// A fake radio station: a 30 s 8 kHz mono WAV tone, so the browser has a real stream to play.
+function wav() {
+  const rate = 8000, n = rate * 30, data = Buffer.alloc(n * 2);
+  for (let i = 0; i < n; i++) data.writeInt16LE(Math.round(8000 * Math.sin((2 * Math.PI * 440 * i) / rate)), i * 2);
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + data.length, 4); h.write("WAVEfmt ", 8); h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28);
+  h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write("data", 36); h.writeUInt32LE(data.length, 40);
+  return Buffer.concat([h, data]);
+}
+const tone = wav();
+const radio = http.createServer((req, res) => {
+  res.writeHead(200, { "content-type": "audio/wav", "content-length": tone.length, "accept-ranges": "none" });
+  res.end(tone);
+});
+await new Promise((r) => radio.listen(0, "127.0.0.1", r));
+const stationUrl = `http://127.0.0.1:${radio.address().port}/live`;
 
 const base = process.env.MUSEQ_URL;
 const token = process.env.MUSEQ_TOKEN;
@@ -59,7 +78,42 @@ await new Promise((r) => setTimeout(r, 1500));
 const after = await (await fetch(`${base}/v1/session`, { headers: auth })).json();
 check(after.state === "paused", `player obeyed the command (state ${after.state})`);
 
+// ---- radio stations: add one through the API, find it in the UI, play it, control it ----
+const addRes = await fetch(`${base}/v1/stations`, { method: "POST", headers: auth, body: JSON.stringify({ name: "Smoke Test FM", url: stationUrl, category: "Music" }) });
+check(addRes.status === 201, "a station can be added through the API");
+await page.reload();
+await page.waitForSelector("#app", { state: "visible" });
+await page.fill("#st-search", "smoke test");
+await page.waitForFunction(() => document.querySelectorAll("#st-list li").length === 1);
+await page.locator("#st-list li button", { hasText: "Play" }).click();
+await page.waitForFunction(() => { const a = document.getElementById("st-audio"); return !a.paused && a.currentTime > 0.3; }, null, { timeout: 15000 }).catch(() => {});
+const playing = await page.evaluate(() => { const a = document.getElementById("st-audio"); return { paused: a.paused, t: a.currentTime }; });
+check(!playing.paused && playing.t > 0, `the station plays in the browser (t=${playing.t.toFixed(2)}s)`);
+let ssess;
+for (let i = 0; i < 40; i++) {
+  ssess = await (await fetch(`${base}/v1/session`, { headers: auth })).json();
+  if (ssess.station) break;
+  await new Promise((r) => setTimeout(r, 250));
+}
+check(ssess?.station?.name === "Smoke Test FM" && ssess.state === "playing", `session reports the station (${ssess?.station?.name}, ${ssess?.state})`);
+const pause2 = await fetch(`${base}/v1/session`, { method: "POST", headers: auth, body: JSON.stringify({ action: "pause" }) });
+await new Promise((r) => setTimeout(r, 1500));
+const stPaused = await page.evaluate(() => document.getElementById("st-audio").paused);
+check(pause2.status === 202 && stPaused, "a remote pause stops the station");
+const dead = await fetch(`${base}/v1/stations`, { method: "POST", headers: auth, body: JSON.stringify({ name: "Dead FM", url: "http://127.0.0.1:9/none" }) });
+const job = await (await fetch(`${base}/v1/jobs`, { method: "POST", headers: auth, body: JSON.stringify({ kind: "check_stations" }) })).json();
+let res;
+for (let i = 0; i < 60; i++) {
+  res = await (await fetch(`${base}/v1/jobs/${job.id}`, { headers: auth })).json();
+  if (res.state === "done" || res.state === "failed") break;
+  await new Promise((r) => setTimeout(r, 500));
+}
+const list = await (await fetch(`${base}/v1/stations?limit=50`, { headers: auth })).json();
+const byName = Object.fromEntries(list.items.map((s) => [s.name, s]));
+check(dead.status === 201 && byName["Smoke Test FM"]?.alive === true && byName["Dead FM"]?.alive === false, `the check marks the live station alive and the dead one dead (${byName["Dead FM"]?.error})`);
+
 const relevant = errors.filter((e) => !/favicon|Failed to load resource.*(404|401)/.test(e));
 check(relevant.length === 0, `no console/page errors${relevant.length ? ": " + relevant.join(" | ") : ""}`);
 await browser.close();
+radio.close();
 process.exit(fails.length ? 1 : 0);

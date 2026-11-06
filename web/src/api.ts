@@ -11,6 +11,8 @@ export interface Track {
 export interface Skin { id: string; name: string }
 export interface SessionSnapshot { state: string; track: Track | null; position_ms: number; volume: number; client_id: string | null }
 
+export interface Station { id: string; name: string; category: string; url: string; alive: boolean | null; error: string | null; checked_at: number | null }
+
 export class Unauthorized extends Error {}
 
 async function req(method: string, path: string, body?: unknown, raw?: BodyInit): Promise<Response> {
@@ -44,6 +46,9 @@ export const api = {
   },
   logout: () => req("POST", "/v1/logout"),
   tracks: (q: string) => req("GET", `/v1/tracks?limit=200&q=${encodeURIComponent(q)}`).then((r) => json<{ items: Track[]; total: number }>(r)),
+  stations: (q: string, category: string, liveOnly: boolean) =>
+    req("GET", `/v1/stations?limit=500&q=${encodeURIComponent(q)}&category=${encodeURIComponent(category)}${liveOnly ? "&alive=true" : ""}`).then((r) => json<{ items: Station[]; total: number }>(r)),
+  checkStations: () => req("POST", "/v1/jobs", { kind: "check_stations" }).then((r) => json<{ id: string }>(r)),
   skins: () => req("GET", "/v1/skins").then((r) => json<Skin[]>(r)),
   uploadSkin: (name: string, file: File) => req("POST", `/v1/skins?name=${encodeURIComponent(name)}`, undefined, file).then((r) => json<Skin>(r)),
   scan: () => req("POST", "/v1/jobs", { kind: "scan" }).then((r) => json<{ id: string }>(r)),
