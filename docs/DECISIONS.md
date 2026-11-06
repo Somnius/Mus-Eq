@@ -20,3 +20,6 @@
 - 2026-11-07 **No read-only token yet**; widgets use the owner token. Revisit when per-device tokens arrive.
 - 2026-11-07 **Web client is served by the server** (same origin); Vite proxies in development.
 - 2026-11-07 **Process: each phase ends with tests, two independent reviews, doc updates and the owner's green light; commits are local per step and pushes happen at phase completion.**
+- 2026-11-07 **Cookie = random server-side session id**, not the token (review finding): logout revokes it; login attempts are rate limited.
+- 2026-11-07 **A moved or renamed file keeps its row** (matched by sha256 when its old path is gone), so playlists don't lose it.
+- 2026-11-07 **Web client uses Webamp's private `__onStateChange` hook** to notice state changes. If a Webamp upgrade removes it, session reporting stops (the 10 s interval report still fires). Pin the Webamp version and re-run the smoke test on upgrades.

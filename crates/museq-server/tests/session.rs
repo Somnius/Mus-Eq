@@ -144,6 +144,7 @@ async fn cookie_login_works_and_csrf_guard_applies_to_cookie_auth_only() {
     let out = Request::builder()
         .method(Method::POST)
         .uri("/v1/logout")
+        .header(header::COOKIE, &cookie)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::empty())
         .unwrap();
@@ -277,7 +278,7 @@ async fn websocket_gets_snapshot_events_and_commands_and_refuses_foreign_origin(
             .is_err()
     );
 
-    let mut ok = format!("ws://{addr}/v1/events")
+    let mut ok = format!("ws://{addr}/v1/events?client_id=c1")
         .into_client_request()
         .unwrap();
     ok.headers_mut().insert(
@@ -416,4 +417,164 @@ async fn web_client_is_served_with_spa_fallback_and_api_stays_protected() {
     // traversal must not escape the web dir
     let (s, _, b) = send(&app, get("/..%2F..%2FCargo.toml")).await;
     assert!(!String::from_utf8_lossy(&b).contains("[package]"), "{s}");
+}
+
+#[tokio::test]
+async fn logout_revokes_the_cookie_and_logins_are_rate_limited() {
+    let app = api::router(state(None));
+    let login = |token: &str| {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/v1/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"token": token}).to_string()))
+            .unwrap()
+    };
+    let (_, h, _) = send(&app, login(TOKEN)).await;
+    let cookie = h
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    assert!(
+        !cookie.contains(TOKEN),
+        "the cookie must not be the token itself"
+    );
+    let get = || {
+        Request::builder()
+            .uri("/v1/tracks")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(send(&app, get()).await.0, StatusCode::OK);
+
+    // logout needs auth, then the cookie stops working
+    let out_unauth = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/logout")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&app, out_unauth).await.0, StatusCode::UNAUTHORIZED);
+    let out = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/logout")
+        .header(header::COOKIE, &cookie)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&app, out).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(
+        send(&app, get()).await.0,
+        StatusCode::UNAUTHORIZED,
+        "a logged-out cookie must be dead"
+    );
+
+    // ten wrong tokens, then even the right one waits
+    for _ in 0..10 {
+        assert_eq!(
+            send(&app, login("wrong-wrong-wrong-1")).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        send(&app, login(TOKEN)).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[tokio::test]
+async fn commands_need_the_reporting_client_to_be_connected() {
+    let app = api::router(state(None));
+    let tid = first_track_id(&app).await;
+    let addr = serve(app).await;
+    let post = |body: Value| {
+        let addr = addr.clone();
+        async move {
+            let mut s = tokio::net::TcpStream::connect(&addr).await.unwrap();
+            let body = body.to_string();
+            let req = format!(
+                "POST /v1/session HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            tokio::io::AsyncWriteExt::write_all(&mut s, req.as_bytes())
+                .await
+                .unwrap();
+            let mut out = Vec::new();
+            tokio::io::AsyncReadExt::read_to_end(&mut s, &mut out)
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&out)
+                .split(' ')
+                .nth(1)
+                .unwrap()
+                .to_string()
+        }
+    };
+    let connect = |client: Option<&str>| {
+        let url = match client {
+            Some(c) => format!("ws://{addr}/v1/events?client_id={c}"),
+            None => format!("ws://{addr}/v1/events"),
+        };
+        let mut r = url.into_client_request().unwrap();
+        r.headers_mut().insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {TOKEN}")).unwrap(),
+        );
+        async move { tokio_tungstenite::connect_async(r).await.unwrap().0 }
+    };
+    assert_eq!(
+        post(json!({"action": "report", "client_id": "p1", "state": "playing", "track_id": tid}))
+            .await,
+        "200"
+    );
+
+    // only a widget is connected (no client id): the player is not there, so 409
+    let _widget = connect(None).await;
+    assert_eq!(post(json!({"action": "pause"})).await, "409");
+
+    // the player connects: commands are accepted
+    let mut player = connect(Some("p1")).await;
+    assert_eq!(post(json!({"action": "pause"})).await, "202");
+
+    // the player leaves: back to 409
+    player.close(None).await.unwrap();
+    drop(player);
+    for _ in 0..40 {
+        if post(json!({"action": "pause"})).await == "409" {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("commands were still accepted after the player disconnected");
+}
+
+#[tokio::test]
+async fn unknown_api_paths_are_json_404_even_with_the_web_client_served() {
+    let web = tempfile::tempdir().unwrap();
+    std::fs::write(web.path().join("index.html"), "<html></html>").unwrap();
+    for app in [
+        api::router(state(None)),
+        api::router(state(Some(web.path().to_path_buf()))),
+    ] {
+        let (s, _, b) = send(
+            &app,
+            Request::builder()
+                .uri("/v1/nope")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        assert!(
+            String::from_utf8_lossy(&b).contains("\"error\""),
+            "{}",
+            String::from_utf8_lossy(&b)
+        );
+    }
 }

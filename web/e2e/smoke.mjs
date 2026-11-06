@@ -57,7 +57,7 @@ const cmd = await fetch(`${base}/v1/session`, { method: "POST", headers: auth, b
 check(cmd.status === 202, "a remote pause command is accepted while the player is connected");
 await new Promise((r) => setTimeout(r, 1500));
 const after = await (await fetch(`${base}/v1/session`, { headers: auth })).json();
-check(after.state === "paused" || after.state === "stopped", `player obeyed the command (state ${after.state})`);
+check(after.state === "paused", `player obeyed the command (state ${after.state})`);
 
 const relevant = errors.filter((e) => !/favicon|Failed to load resource.*(404|401)/.test(e));
 check(relevant.length === 0, `no console/page errors${relevant.length ? ": " + relevant.join(" | ") : ""}`);

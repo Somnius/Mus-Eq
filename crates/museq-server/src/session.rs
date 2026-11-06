@@ -1,7 +1,7 @@
 use axum::{
     Json,
     extract::{
-        State, WebSocketUpgrade,
+        Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, StatusCode, header},
@@ -140,7 +140,14 @@ pub async fn post_session(State(s): State<AppState>, Json(b): Json<SessionBody>)
                 .unwrap_or_else(|e| e.into_inner())
                 .client_id
                 .clone();
-            if target.is_none() || s.events.receiver_count() == 0 {
+            // The client that last reported must still have its WebSocket open.
+            let connected = target.as_ref().is_some_and(|t| {
+                s.players
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .contains_key(t)
+            });
+            if !connected {
                 return err(
                     StatusCode::CONFLICT,
                     "no player is connected; start playback in a client first",
@@ -171,8 +178,14 @@ fn origin_ok(headers: &HeaderMap) -> bool {
     origin.split_once("://").map(|(_, h)| h) == Some(host)
 }
 
+#[derive(Deserialize)]
+pub struct EventsQuery {
+    client_id: Option<String>,
+}
+
 pub async fn events(
     State(s): State<AppState>,
+    Query(q): Query<EventsQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -181,7 +194,28 @@ pub async fn events(
     }
     let rx = s.events.subscribe();
     let first = json!({"type": "session", "session": session_json(&s)}).to_string();
-    ws.on_upgrade(move |socket| pump(socket, rx, first))
+    // A player says who it is (?client_id=) so commands can be checked against live connections.
+    let player = q.client_id.filter(|c| !c.is_empty() && c.len() <= 64);
+    if let Some(id) = &player {
+        *s.players
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(id.clone())
+            .or_insert(0) += 1;
+    }
+    let players = s.players.clone();
+    ws.on_upgrade(move |socket| async move {
+        pump(socket, rx, first).await;
+        if let Some(id) = player {
+            let mut p = players.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(n) = p.get_mut(&id) {
+                *n -= 1;
+                if *n == 0 {
+                    p.remove(&id);
+                }
+            }
+        }
+    })
 }
 
 async fn pump(

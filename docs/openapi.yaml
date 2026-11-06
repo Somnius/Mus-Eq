@@ -4,7 +4,7 @@ info:
   version: 0.1.0
   description: >-
     Draft v1 contract for the MusEq server. Contract first: clients are built
-    against this file. Implemented: health, tracks, audio, playlists, scan jobs. The rest (session, events, stations, radio, skins, other job kinds) is still draft.
+    against this file. Implemented: health, login/logout, tracks, audio, playlists, scan jobs, session, events, skins. Still draft: stations, radio, the other job kinds.
 servers:
   - url: http://127.0.0.1:8080
 security:
@@ -50,12 +50,12 @@ paths:
       responses:
         "204": { description: Cookie set }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { description: "Too many failed logins in the last minute", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/logout:
     post:
       tags: [system]
       operationId: logout
-      summary: Clear the cookie
-      security: []
+      summary: End the browser session (the cookie id is revoked server-side). Needs auth like any mutation.
       responses:
         "204": { description: Cookie cleared }
   /v1/tracks:
@@ -274,8 +274,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Session" }
         "400": { description: Invalid body, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: No player is connected
+          description: No player is connected (the client that last reported has no open /v1/events socket with its client_id)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -283,7 +284,7 @@ paths:
     get:
       tags: [session]
       operationId: events
-      summary: WebSocket upgrade. Sends a session snapshot, then {type:session} and {type:command,target} messages. A browser Origin that differs from Host is refused (403).
+      summary: WebSocket upgrade. Players pass ?client_id= so commands can be checked against live connections. Sends a session snapshot, then {type:session} and {type:command,target} messages. A browser Origin that differs from Host is refused (403).
       responses:
         "101": { description: Switching protocols }
   /v1/stations:
@@ -342,6 +343,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "400": { description: "Unknown job kind", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "501": { description: "Job kind not implemented yet (tag, fingerprint)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "403":
           description: Job kind disabled by configuration
           content:
@@ -360,6 +363,20 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/skins/{id}:
+    get:
+      tags: [skins]
+      operationId: getSkin
+      summary: Download a stored .wsz (id is the 16-hex-character id from the list)
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The raw skin file
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
         "404": { $ref: "#/components/responses/NotFound" }
   /v1/skins:
     get:
@@ -389,6 +406,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Skin" }
+        "400": { description: "Not a zip file", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "413": { description: "Larger than 8 MiB", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 components:
   securitySchemes:
     bearer:
@@ -430,7 +449,7 @@ components:
         version: { type: string }
     Track:
       type: object
-      required: [id, title]
+      required: [id, title, preferred_file_id]
       properties:
         id: { type: string }
         title: { type: string }

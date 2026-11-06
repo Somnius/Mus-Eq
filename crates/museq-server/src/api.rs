@@ -9,8 +9,10 @@ use axum::{
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
@@ -25,7 +27,18 @@ pub struct AppState {
     pub web_dir: Option<Arc<PathBuf>>,
     pub events: tokio::sync::broadcast::Sender<String>,
     pub session: Arc<Mutex<crate::session::Session>>,
+    /// Browser login sessions: random cookie value -> when it was issued. Lost on restart (log in again).
+    pub cookies: Arc<Mutex<HashMap<String, Instant>>>,
+    /// (window start, failed attempts) for the login rate limit.
+    pub login_fails: Arc<Mutex<(Instant, u32)>>,
+    /// Connected WebSocket clients by client id (a player must be connected to receive commands).
+    pub players: Arc<Mutex<HashMap<String, usize>>>,
 }
+
+const COOKIE_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
+const MAX_COOKIES: usize = 64;
+const MAX_LOGIN_FAILS: u32 = 10;
+const LOGIN_WINDOW: Duration = Duration::from_secs(60);
 
 impl AppState {
     pub fn new(
@@ -43,6 +56,9 @@ impl AppState {
             web_dir: web_dir.map(Arc::new),
             events: tokio::sync::broadcast::channel(64).0,
             session: Arc::new(Mutex::new(crate::session::Session::default())),
+            cookies: Arc::new(Mutex::new(HashMap::new())),
+            login_fails: Arc::new(Mutex::new((Instant::now(), 0))),
+            players: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -67,6 +83,7 @@ pub fn router(state: AppState) -> Router {
             get(get_playlist).delete(delete_playlist),
         )
         .route("/v1/playlists/{id}/items", post(add_item).put(set_items))
+        .route("/v1/logout", post(logout))
         .route("/v1/jobs", post(create_job))
         .route("/v1/jobs/{id}", get(get_job))
         .route(
@@ -84,8 +101,12 @@ pub fn router(state: AppState) -> Router {
     let mut app = Router::new()
         .route("/v1/health", get(health))
         .route("/v1/login", post(login))
-        .route("/v1/logout", post(logout))
-        .merge(protected);
+        .merge(protected)
+        // an unknown API path must not fall through to the web client's index.html
+        .route(
+            "/v1/{*rest}",
+            axum::routing::any(|| async { err(StatusCode::NOT_FOUND, "no such endpoint") }),
+        );
     if let Some(dir) = state.web_dir.clone() {
         // The web client is served from the same origin as the API, so cookies need no CORS.
         let index = dir.join("index.html");
@@ -125,7 +146,11 @@ async fn auth(State(s): State<AppState>, req: Request, next: Next) -> Response {
         .unwrap_or(false);
     if !bearer {
         let cookie = cookie_token(req.headers())
-            .map(|t| ct_eq(t.as_bytes(), s.token.as_bytes()))
+            .map(|id| {
+                let jar = s.cookies.lock().unwrap_or_else(|e| e.into_inner());
+                jar.get(&id)
+                    .is_some_and(|issued| issued.elapsed() < COOKIE_TTL)
+            })
             .unwrap_or(false);
         if !cookie {
             return err(StatusCode::UNAUTHORIZED, "missing or invalid token");
@@ -152,19 +177,53 @@ struct Login {
 }
 
 async fn login(State(s): State<AppState>, Json(body): Json<Login>) -> Response {
-    if !ct_eq(body.token.as_bytes(), s.token.as_bytes()) {
-        return err(StatusCode::UNAUTHORIZED, "invalid token");
+    {
+        // Brute-force guard: too many failures in a minute and logins pause for the rest of it.
+        let mut f = s.login_fails.lock().unwrap_or_else(|e| e.into_inner());
+        if f.0.elapsed() > LOGIN_WINDOW {
+            *f = (Instant::now(), 0);
+        }
+        if f.1 >= MAX_LOGIN_FAILS {
+            return err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many failed logins, try again in a minute",
+            );
+        }
+        if !ct_eq(body.token.as_bytes(), s.token.as_bytes()) {
+            f.1 += 1;
+            return err(StatusCode::UNAUTHORIZED, "invalid token");
+        }
+    }
+    // The cookie is a random session id, never the token itself, so logout really revokes it.
+    let mut raw = [0u8; 32];
+    if getrandom::fill(&mut raw).is_err() {
+        return internal("no randomness available");
+    }
+    let id: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    {
+        let mut jar = s.cookies.lock().unwrap_or_else(|e| e.into_inner());
+        jar.retain(|_, issued| issued.elapsed() < COOKIE_TTL);
+        while jar.len() >= MAX_COOKIES {
+            let Some(oldest) = jar.iter().min_by_key(|(_, t)| **t).map(|(k, _)| k.clone()) else {
+                break;
+            };
+            jar.remove(&oldest);
+        }
+        jar.insert(id.clone(), Instant::now());
     }
     // No `Secure` flag on purpose: the server is often reached over plain HTTP on a LAN or
     // Tailscale. Put it behind TLS for a public endpoint.
-    let cookie = format!(
-        "{COOKIE}={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000",
-        body.token
-    );
+    let cookie = format!("{COOKIE}={id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000");
     (StatusCode::NO_CONTENT, [(header::SET_COOKIE, cookie)]).into_response()
 }
 
-async fn logout() -> Response {
+async fn logout(State(s): State<AppState>, headers: HeaderMap) -> Response {
+    if let Some(id) = cookie_token(&headers) {
+        s.cookies
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
+    }
     let cookie = format!("{COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
     (StatusCode::NO_CONTENT, [(header::SET_COOKIE, cookie)]).into_response()
 }

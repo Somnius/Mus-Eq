@@ -9,14 +9,18 @@ url=${MUSEQ_URL:-http://127.0.0.1:8080}
 token=${MUSEQ_TOKEN:-}
 [ -z "$token" ] && [ -n "${MUSEQ_TOKEN_FILE:-}" ] && token=$(tr -d '[:space:]' < "$MUSEQ_TOKEN_FILE")
 [ -n "$token" ] || { echo "set MUSEQ_TOKEN or MUSEQ_TOKEN_FILE" >&2; exit 2; }
-auth=(-H "Authorization: Bearer $token")
+# The token goes to curl through stdin (--config -), so it never shows up in the process list.
+api() { # api METHOD PATH [JSON_BODY]
+  local method=$1 path=$2 body=${3:-}
+  { printf 'header = "Authorization: Bearer %s"\n' "$token"; } |
+    curl -fsS --max-time 3 --config - -X "$method" -H 'content-type: application/json' ${body:+-d "$body"} "$url$path"
+}
 
 case "${1:-}" in
   play|pause|next|previous)
-    curl -fsS -X POST "${auth[@]}" -H 'content-type: application/json' \
-      -d "{\"action\":\"$1\"}" "$url/v1/session" >/dev/null ;;
+    api POST /v1/session "{\"action\":\"$1\"}" >/dev/null ;;
   ""|--json)
-    s=$(curl -fsS --max-time 3 "${auth[@]}" "$url/v1/session" 2>/dev/null) || { [ "${1:-}" = --json ] && echo '{"text":"","class":"offline"}'; exit 0; }
+    s=$(api GET /v1/session 2>/dev/null) || { [ "${1:-}" = --json ] && echo '{"text":"","class":"offline"}'; exit 0; }
     state=$(jq -r .state <<<"$s")
     text=$(jq -r 'if .track then ((.track.artist // "") + (if .track.artist then " - " else "" end) + .track.title) else "" end' <<<"$s")
     if [ "${1:-}" = --json ]; then

@@ -186,34 +186,53 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
         });
         let search = crate::db::search_text(&title, p.artist.as_deref(), p.album.as_deref());
 
-        let conn = crate::db::lock(db);
+        let mut conn = crate::db::lock(db);
+        // A moved or renamed file has the same content hash as a row whose path is gone:
+        // keep that row (and its playlist entries) instead of removing and re-adding it.
+        let moved_from: Option<i64> = if existing.is_none() {
+            conn.prepare("SELECT id, path FROM file WHERE sha256=?1 ORDER BY id")
+                .and_then(|mut st| {
+                    st.query_map([&sha], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .unwrap_or_default()
+                .into_iter()
+                .find(|(_, old)| !root.join(old).exists())
+                .map(|(id, _)| id)
+        } else {
+            None
+        };
+        let target = existing.map(|(id, _, _)| id).or(moved_from);
         let res: rusqlite::Result<()> = (|| {
-            match existing {
-                Some((id, _, _)) => {
-                    conn.execute(
-                        "UPDATE file SET sha256=?1, bytes=?2, mtime=?3, codec=?4, duration_ms=?5 WHERE id=?6",
-                        params![sha, bytes, mtime, codec, p.duration_ms, id],
+            let tx = conn.transaction()?;
+            match target {
+                Some(id) => {
+                    tx.execute(
+                        "UPDATE file SET sha256=?1, path=?7, bytes=?2, mtime=?3, codec=?4, duration_ms=?5 WHERE id=?6",
+                        params![sha, bytes, mtime, codec, p.duration_ms, id, rel],
                     )?;
-                    conn.execute(
+                    tx.execute(
                         "UPDATE track SET title=?1, artist=?2, album=?3, duration_ms=?4, search_text=?6 WHERE preferred_file_id=?5",
                         params![title, p.artist, p.album, p.duration_ms, id, search],
                     )?;
                 }
                 None => {
-                    conn.execute(
+                    tx.execute(
                         "INSERT INTO file(sha256, path, bytes, mtime, codec, duration_ms) VALUES(?1,?2,?3,?4,?5,?6)",
                         params![sha, rel, bytes, mtime, codec, p.duration_ms],
                     )?;
-                    let id = conn.last_insert_rowid();
-                    conn.execute(
+                    let id = tx.last_insert_rowid();
+                    tx.execute(
                         "INSERT INTO track(title, artist, album, duration_ms, preferred_file_id, search_text) VALUES(?1,?2,?3,?4,?5,?6)",
                         params![title, p.artist, p.album, p.duration_ms, id, search],
                     )?;
                 }
             }
-            Ok(())
+            tx.commit()
         })();
-        match (res, existing) {
+        match (res, target) {
             (Ok(()), Some(_)) => stats.updated += 1,
             (Ok(()), None) => stats.added += 1,
             (Err(_), _) => stats.errors += 1,

@@ -21,8 +21,8 @@ phone "radio uplink" (Ogg/Opus over HTTP chunks, WebRTC later) --> radio(live)
 - Mic, ducking and mixer live on the phone (the mic is there); the server receives an already-mixed stream.
 - One global playback session: fine for one listener; per-device sessions come later if needed.
 - Bind to localhost by default (`MUSEQ_BIND`). LAN/Tailscale/VPN/tunnel is the owner's network; a public endpoint is opt-in and needs token auth + TLS.
-- Auth: one owner token, as `Authorization: Bearer` (scripts, widgets) or as an HttpOnly, SameSite=Strict cookie set by `POST /v1/login` (browsers, so `<audio>`, skins and the WebSocket work). `/v1/health`, `/v1/login`, `/v1/logout` and the static web client are open. Cookie requests that mutate must be JSON or a raw upload (CSRF guard); the WebSocket refuses a foreign `Origin`. The cookie has no `Secure` flag because the server is often used over plain HTTP on a LAN; use TLS in front of a public endpoint. Read-only and per-device tokens are later work.
-- Session: one global session. The playing browser **reports** (`POST /v1/session` `action=report`, with its own `client_id`) on track and state changes and at most every 10 s; the server stores it and broadcasts it on `/v1/events`. Widgets read `GET /v1/session` and send commands (`play|pause|next|previous|volume`), which the server forwards over the WebSocket to the client that last reported; only that client acts, so other open tabs don't start playing. With no connected player a command answers 409. Position is not reported by the web client yet.
+- Auth: one owner token, as `Authorization: Bearer` (scripts, widgets) or as an HttpOnly, SameSite=Strict cookie set by `POST /v1/login` (browsers, so `<audio>`, skins and the WebSocket work). The cookie is a random session id kept in server memory, never the token: `POST /v1/logout` revokes it, sessions last 30 days and are forgotten on restart, and at most 64 are kept. After 10 failed logins in a minute, logins answer 429 for the rest of that minute. `/v1/health`, `/v1/login` and the static web client are open (logout needs auth, so a cross-site form can't end your session). Cookie requests that mutate must be JSON or a raw upload (CSRF guard); the WebSocket refuses a foreign `Origin`. The cookie has no `Secure` flag because the server is often used over plain HTTP on a LAN; use TLS in front of a public endpoint. Read-only and per-device tokens are later work.
+- Session: one global session. The playing browser **reports** (`POST /v1/session` `action=report`, with its own `client_id`) on track and state changes and at most every 10 s; the server stores it and broadcasts it on `/v1/events`. Widgets read `GET /v1/session` and send commands (`play|pause|next|previous|volume`), which the server forwards over the WebSocket to the client that last reported; only that client acts, so other open tabs don't start playing. A command answers 409 unless that client still has its `/v1/events` socket open (players connect with `?client_id=`). Position is not reported by the web client yet.
 - Web client: built with Vite, served by the server itself from `MUSEQ_WEB_DIR` (same origin, SPA fallback), so cookies need no CORS. In development Vite proxies `/v1` to the server.
 
 ## Stack
@@ -35,7 +35,7 @@ phone "radio uplink" (Ogg/Opus over HTTP chunks, WebRTC later) --> radio(live)
 | Radio out | Icecast-compatible chunked HTTP stream | seconds of latency, fine for radio |
 | Fetch | yt-dlp subprocess behind a config flag, **off by default** | legal gate, see Risks |
 | Metadata | MusicBrainz + Discogs (tags), AcoustID/Chromaprint via `fpcalc` subprocess (identify, dedupe) | AcoustID: 3 req/s, non-commercial, app key (checked); MusicBrainz ~1 rps and Discogs ~60/min [unverified] |
-| Web | TypeScript/Vite + Webamp (MIT [unverified]) for the classic skin | don't call the product "Winamp" |
+| Web | TypeScript/Vite + Webamp (MIT, checked in its `package.json`) for the classic skin | don't call the product "Winamp" |
 | Desktop | Browser first. A native shell (Tauri/`wry` around Webamp, or Qt Quick) is open: Q13, decided at phase 4 | cliamp is only an optional existing client |
 | Android | Kotlin, Media3/ExoPlayer, `mediaPlayback` foreground service; mic radio = second service (`microphone` type) | skin = Webamp in a WebView for v1 (Q5) |
 | Deploy | Docker/Podman, Compose, Caddy optional | phone-as-server = same binary, later |
@@ -56,7 +56,7 @@ Rules: byte identity = sha256. Song identity for dedupe = fingerprint (later); u
 - JSON over HTTP; one WebSocket (`/v1/events`) for session and job events.
 - Audio ids are **file ids**. Playlists and the session refer to track ids; the server picks the track's preferred file.
 - `POST /v1/jobs` with `kind` scan|fetch|tag|fingerprint; `fetch` answers 403 unless enabled in config.
-- Errors are `{ "error": "message" }` with a normal HTTP status.
+- Errors are `{ "error": "message" }` with a normal HTTP status, including unknown `/v1/...` paths. Malformed ids or bodies that axum rejects before our code runs (a non-numeric `{id}`, invalid JSON) still answer with its plain-text 400/422.
 - Implemented so far: health, login/logout, tracks, audio (Range), playlists, scan jobs, session + events, skins. Search is case- and accent-insensitive (Greek tonos and final sigma fold) through a `search_text` column.
 
 ## Modules
@@ -88,4 +88,4 @@ Modern `.wal` skins, lyrics, scrobbling, multi-tenant hosting, iOS, DRM sources,
 - **Fingerprinting:** Chromaprint/`fpcalc` server-side for dedupe (no API). Naming a song from audio = AcoustID. No official Android Chromaprint build found [unverified]; phone-side later. Chromaprint's own licence is unverified (use the FFmpeg-based build).
 - **Android:** foreground services, audio focus, OEM battery killers; needs a real-handset test. Ducking our own music under our mic is a gain on our mixer bus.
 - **Skin parity**, **yt-dlp breakage** (pin + self-update + health check), **CPU** (one encoder per station, 80% cap).
-- **Licences:** cliamp MIT (Bjarne Øverli), Webamp MIT [unverified], Tray-FM station list Unlicense.
+- **Licences:** cliamp MIT (Bjarne Øverli), Webamp MIT (checked; the licence of its bundled base skin is not), Tray-FM station list Unlicense.

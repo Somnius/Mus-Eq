@@ -321,3 +321,104 @@ async fn job_kinds_are_gated() {
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn rescan_updates_changed_files_and_keeps_moved_files_in_their_playlists() {
+    let dir = tempfile::tempdir().unwrap();
+    copy_dir(&fixtures(), dir.path());
+    let app = app_for(dir.path().to_path_buf());
+    scan_and_wait(&app).await;
+
+    // a playlist containing the Opus track
+    let (_, found) = json_call(&app, Method::GET, "/v1/tracks?q=gamma", None).await;
+    let tid = found["items"][0]["id"].as_str().unwrap().to_string();
+    let (_, pl) = json_call(
+        &app,
+        Method::POST,
+        "/v1/playlists",
+        Some(json!({"name": "keep"})),
+    )
+    .await;
+    let uri = format!("/v1/playlists/{}", pl["id"].as_str().unwrap());
+    json_call(
+        &app,
+        Method::POST,
+        &format!("{uri}/items"),
+        Some(json!({"track_id": tid})),
+    )
+    .await;
+
+    // move it: same bytes, new path
+    std::fs::rename(
+        dir.path().join("sub/gamma.opus"),
+        dir.path().join("moved.opus"),
+    )
+    .unwrap();
+    let r = scan_and_wait(&app).await;
+    assert_eq!(
+        (
+            r["added"].as_i64(),
+            r["updated"].as_i64(),
+            r["removed"].as_i64()
+        ),
+        (Some(0), Some(1), Some(0)),
+        "{r}"
+    );
+    let (_, got) = json_call(&app, Method::GET, &uri, None).await;
+    assert_eq!(
+        got["track_ids"],
+        json!([tid]),
+        "the moved track must stay in the playlist"
+    );
+    let (_, all) = json_call(&app, Method::GET, "/v1/tracks", None).await;
+    assert_eq!(all["total"], 4, "no duplicate track after a move");
+
+    // change a file's content: counted as updated
+    let alpha = dir.path().join("alpha.flac");
+    let mut bytes = std::fs::read(&alpha).unwrap();
+    bytes.extend_from_slice(&[0u8; 16]);
+    std::fs::write(&alpha, bytes).unwrap();
+    let r = scan_and_wait(&app).await;
+    assert_eq!(r["updated"], 1, "{r}");
+}
+
+#[tokio::test]
+async fn a_second_scan_is_refused_while_one_runs() {
+    let state = api::AppState::new(
+        db::open_in_memory().unwrap(),
+        fixtures(),
+        TOKEN.into(),
+        std::env::temp_dir(),
+        None,
+    );
+    db::lock(&state.db)
+        .execute("INSERT INTO job(kind, state) VALUES('scan', 'running')", [])
+        .unwrap();
+    let app = api::router(state);
+    let (s, _) = json_call(
+        &app,
+        Method::POST,
+        "/v1/jobs",
+        Some(json!({"kind": "scan"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT);
+}
+
+#[test]
+fn an_older_database_is_migrated_to_the_current_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    {
+        let conn = db::open(&path).unwrap();
+        conn.execute_batch("DROP TABLE skin; PRAGMA user_version = 2;")
+            .unwrap();
+    }
+    let conn = db::open(&path).unwrap();
+    let v: i64 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(v, 3);
+    conn.execute("INSERT INTO skin(id, name, bytes) VALUES('x','y',1)", [])
+        .unwrap();
+}

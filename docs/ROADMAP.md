@@ -36,15 +36,18 @@ Exit met: with `curl` and a token a mixed folder scans, searches and streams wit
 Follow-ups done the same day: accent/case-insensitive Greek search (`search_text`, migration v2), a crashed scan now marks its job failed instead of blocking later scans, nullable fields fixed in the contract. Not tested: the scan-panic path (only reasoned), and a request from another machine on the LAN (owner to try: `curl http://<server-ip>:8080/v1/health` after publishing the port beyond localhost).
 Known gaps carried to later: artist/album are plain text columns (own tables when dedupe needs them); `<audio>` elements can't send an Authorization header, so phase 1b needs a cookie or a short-lived signed URL for audio; the DB mutex is held for short queries only, fine for one owner.
 
-## Phase 1b: web client + session (built 2026-11-07, not yet reviewed or pushed)
+## Phase 1b: web client + session (built and reviewed 2026-11-07, waiting for the green light, not pushed)
 - [x] `docs/SPEC-skin.md`
-- [x] Server: cookie login/logout + CSRF guard, `GET/POST /v1/session` (report and commands), `/v1/events` WebSocket with Origin check, skin upload/list/download, static web serving with SPA fallback; 11 integration tests
-- [x] Web client (Vite + TypeScript + Webamp 2.3.1, MIT): login, library with search, Play/Add, skin upload and picker, session reporting, remote commands. Headless-browser smoke test passes against the dev binary and against the Docker image (login, Greek search, Webamp renders, session reports the track, remote pause obeyed, no console errors)
-- [x] `contrib/now-playing.sh` for status bars and widgets (text or JSON, plus play/pause/next/previous); tested against a live server
+- [x] Server: cookie login/logout (random server-side session id, rate limited, CSRF guard), `GET/POST /v1/session` (report and commands, commands only while the reporting client's socket is open), `/v1/events` WebSocket with Origin check, skin upload/list/download, static web serving with SPA fallback, JSON 404 for unknown API paths
+- [x] Web client (Vite + TypeScript + Webamp 2.3.1, MIT): login, library with search, Play/Add, skin upload and picker, session reporting (on change and every 10 s while playing), remote commands
+- [x] Tests: 18 Rust tests (unit + integration, incl. WebSocket and migration) and a headless-browser smoke test (login, Greek search, Webamp renders, session reports the track, remote pause obeyed, no console errors); `scripts/check.sh` runs everything; CI now also runs `cargo test` and builds the web client
+- [x] `contrib/now-playing.sh` for status bars and widgets (token passed to curl via stdin, not the command line)
+- [x] Review findings fixed (see below)
 - [ ] Omarchy bar-widget packaging: not done. The plugin format is unverified, so only the script exists
 - [ ] Read-only token: dropped for now. The widget uses the owner token on the owner's machine
 - [ ] Position reporting from the web client (not reported yet)
-- [ ] Phase review (two independent reviewers) and green light
+- [ ] Not tested: a scan that panics (only reasoned), access from another machine on the LAN, Podman
+Review: two independent reviews found no auth bypass, traversal or SQL injection. Fixed: cookie was the token itself and logout couldn't revoke it; moved files lost their playlist entries; file+track insert not atomic; a command was accepted when only some other socket was open; no periodic report; no login rate limit; logout was unauthenticated; unknown `/v1` paths returned the web page; CI skipped tests; token visible in the widget script's process list; several contract gaps. Accepted and documented: Webamp's private state hook, plain-text framework rejections for malformed ids.
 Image adds: the built web client (node build stage).
 Exit: play a local album in the browser from another machine; the widget shows now-playing. Checked on localhost only; the other-machine check is still the owner's to try.
 

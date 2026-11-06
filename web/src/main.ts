@@ -111,13 +111,16 @@ async function startPlayer() {
     currentTrackId = t ? (byUrl.get(new URL(t.url, location.href).pathname)?.id ?? null) : null;
     report(true);
   });
+  // __onStateChange is a private Webamp hook; if an upgrade removes it, reporting stops (see DECISIONS).
   webamp.__onStateChange(() => report());
+  // Also re-report every 10 s while playing, so a restarted server learns the session again.
+  window.setInterval(() => { if (webamp?.getMediaStatus() === "PLAYING") report(true); }, 10_000);
 }
 
 // ---- remote commands over the WebSocket -------------------------------------------------
 
 function connectEvents() {
-  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/v1/events`);
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/v1/events?client_id=${clientId}`);
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data as string) as { type: string; action?: string; target?: string | null; track_id?: string | null; volume?: number | null; session?: SessionSnapshot };
     if (msg.type !== "command" || msg.target !== clientId || !webamp) return;
