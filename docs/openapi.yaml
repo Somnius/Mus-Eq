@@ -256,10 +256,11 @@ paths:
               type: object
               required: [action]
               properties:
-                action: { type: string, enum: [report, play, pause, next, previous, volume] }
+                action: { type: string, enum: [report, play, pause, next, previous, volume], description: "play may carry track_id or station_id (not both) to start something" }
                 client_id: { type: string, maxLength: 64, description: Required for report }
                 state: { type: string, enum: [stopped, playing, paused] }
                 track_id: { type: string }
+                station_id: { type: string, description: "Report a station instead of a track; with play, start that station" }
                 position_ms: { type: integer, minimum: 0 }
                 volume: { type: number, minimum: 0, maximum: 1 }
       responses:
@@ -292,14 +293,72 @@ paths:
       tags: [stations]
       operationId: listStations
       summary: List stations. External stations carry the upstream url and are played by the client directly, never proxied.
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: "Case- and accent-insensitive name search" }
+        - { name: category, in: query, schema: { type: string, enum: [Music, News, Sports, Other] } }
+        - { name: alive, in: query, schema: { type: string, enum: ["true", "false", unknown] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
       responses:
         "200":
           description: Stations
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: "#/components/schemas/Station" }
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Station" }
+                  total: { type: integer }
+        "400": { description: "Bad filter value", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    post:
+      tags: [stations]
+      operationId: addStation
+      summary: Add a station by stream URL (http or https only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url]
+              properties:
+                name: { type: string, maxLength: 200 }
+                url: { type: string }
+                category: { type: string, enum: [Music, News, Sports, Other] }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Station" }
+        "400": { description: "Bad name or URL", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "A station with that URL exists", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/stations/{id}:
+    get:
+      tags: [stations]
+      operationId: getStation
+      summary: One station
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The station
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Station" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [stations]
+      operationId: deleteStation
+      summary: Remove a station
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/radio/{id}.{ext}:
     get:
       tags: [stations]
@@ -330,7 +389,7 @@ paths:
               type: object
               required: [kind]
               properties:
-                kind: { type: string, enum: [scan, fetch, tag, fingerprint] }
+                kind: { type: string, enum: [scan, check_stations, fetch, tag, fingerprint] }
                 input: { type: object, additionalProperties: true }
       responses:
         "202":
@@ -473,25 +532,29 @@ components:
       properties:
         state: { type: string, enum: [stopped, playing, paused] }
         track: { oneOf: [{ $ref: "#/components/schemas/Track" }, { type: "null" }] }
-        station_id: { type: string }
+        station: { oneOf: [{ $ref: "#/components/schemas/Station" }, { type: "null" }], description: "Set while a station plays (id, name, category, url)" }
         position_ms: { type: integer }
         volume: { type: number }
         client_id: { type: [string, "null"], description: The client that last reported }
     Station:
       type: object
-      required: [id, name, kind]
+      required: [id, name, kind, category, url, source]
       properties:
         id: { type: string }
         name: { type: string }
-        kind: { type: string, enum: [external, library, live] }
-        category: { type: string }
+        kind: { type: string, enum: [external] , description: "library and live stations arrive with phases 5 and 6" }
+        category: { type: string, enum: [Music, News, Sports, Other] }
         url: { type: string, format: uri }
+        source: { type: string, description: "manual, trayfm or museq" }
+        alive: { type: [boolean, "null"], description: "null = never checked" }
+        checked_at: { type: [integer, "null"], description: "Unix seconds of the last liveness check" }
+        error: { type: [string, "null"], description: "Why the last check failed" }
     Job:
       type: object
       required: [id, kind, state]
       properties:
         id: { type: string }
-        kind: { type: string, enum: [scan, fetch, tag, fingerprint] }
+        kind: { type: string, enum: [scan, check_stations, fetch, tag, fingerprint] }
         state: { type: string, enum: [queued, running, done, failed] }
         attempts: { type: integer }
         result: { type: [object, "null"], additionalProperties: true }

@@ -48,6 +48,8 @@ export const api = {
   tracks: (q: string) => req("GET", `/v1/tracks?limit=200&q=${encodeURIComponent(q)}`).then((r) => json<{ items: Track[]; total: number }>(r)),
   stations: (q: string, category: string, liveOnly: boolean) =>
     req("GET", `/v1/stations?limit=500&q=${encodeURIComponent(q)}&category=${encodeURIComponent(category)}${liveOnly ? "&alive=true" : ""}`).then((r) => json<{ items: Station[]; total: number }>(r)),
+  station: (id: string) => req("GET", `/v1/stations/${id}`).then((r) => json<Station>(r)),
+  track: (id: string) => req("GET", `/v1/tracks/${id}`).then((r) => json<Track>(r)),
   checkStations: () => req("POST", "/v1/jobs", { kind: "check_stations" }).then((r) => json<{ id: string }>(r)),
   skins: () => req("GET", "/v1/skins").then((r) => json<Skin[]>(r)),
   uploadSkin: (name: string, file: File) => req("POST", `/v1/skins?name=${encodeURIComponent(name)}`, undefined, file).then((r) => json<Skin>(r)),

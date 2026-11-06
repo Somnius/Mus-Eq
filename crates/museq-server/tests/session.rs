@@ -641,3 +641,111 @@ async fn a_station_can_be_reported_instead_of_a_track() {
         (Value::Null, Some(tid.as_str()))
     );
 }
+
+#[tokio::test]
+async fn play_commands_can_name_a_station_or_a_track_and_are_validated() {
+    let app = api::router(state(None));
+    let tid = first_track_id(&app).await;
+    let (_, _, b) = send(
+        &app,
+        bearer(
+            Method::POST,
+            "/v1/stations",
+            Some(json!({"name": "Cmd FM", "url": "http://a.example/c"})),
+        ),
+    )
+    .await;
+    let sid = serde_json::from_slice::<Value>(&b).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (s, _, b) = send(
+        &app,
+        bearer(Method::GET, &format!("/v1/stations/{sid}"), None),
+    )
+    .await;
+    assert_eq!(
+        (
+            s,
+            serde_json::from_slice::<Value>(&b).unwrap()["name"].clone()
+        ),
+        (StatusCode::OK, json!("Cmd FM"))
+    );
+    assert_eq!(
+        send(&app, bearer(Method::GET, "/v1/stations/99999", None))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+
+    let addr = serve(app).await;
+    let post = |body: Value| {
+        let addr = addr.clone();
+        async move {
+            let mut s = tokio::net::TcpStream::connect(&addr).await.unwrap();
+            let body = body.to_string();
+            let req = format!(
+                "POST /v1/session HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            tokio::io::AsyncWriteExt::write_all(&mut s, req.as_bytes())
+                .await
+                .unwrap();
+            let mut out = Vec::new();
+            tokio::io::AsyncReadExt::read_to_end(&mut s, &mut out)
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&out)
+                .split(' ')
+                .nth(1)
+                .unwrap()
+                .to_string()
+        }
+    };
+    assert_eq!(
+        post(json!({"action": "report", "client_id": "p1", "state": "playing", "track_id": tid}))
+            .await,
+        "200"
+    );
+    let mut r = format!("ws://{addr}/v1/events?client_id=p1")
+        .into_client_request()
+        .unwrap();
+    r.headers_mut().insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {TOKEN}")).unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(r).await.unwrap();
+    let _snapshot = ws.next().await.unwrap().unwrap();
+
+    assert_eq!(
+        post(json!({"action": "play", "station_id": sid})).await,
+        "202"
+    );
+    let cmd: Value =
+        serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+    assert_eq!(
+        (
+            cmd["action"].as_str(),
+            cmd["station_id"].as_str(),
+            cmd["target"].as_str()
+        ),
+        (Some("play"), Some(sid.as_str()), Some("p1"))
+    );
+
+    assert_eq!(
+        post(json!({"action": "play", "station_id": "99999"})).await,
+        "404"
+    );
+    assert_eq!(
+        post(json!({"action": "play", "station_id": sid, "track_id": tid})).await,
+        "400"
+    );
+    assert_eq!(
+        post(json!({"action": "pause", "station_id": sid})).await,
+        "400"
+    );
+    assert_eq!(
+        post(json!({"action": "play", "track_id": "x"})).await,
+        "400"
+    );
+}

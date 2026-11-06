@@ -102,7 +102,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/v1/stations/{id}",
-            axum::routing::delete(crate::stations::delete_station),
+            get(crate::stations::get_station).delete(crate::stations::delete_station),
         )
         .layer(DefaultBodyLimit::max(crate::skins::MAX_SKIN_BYTES))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth));

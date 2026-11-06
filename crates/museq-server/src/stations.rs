@@ -215,6 +215,22 @@ pub async fn add_station(State(s): State<AppState>, Json(b): Json<NewStation>) -
     }
 }
 
+pub async fn get_station(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
+    use rusqlite::OptionalExtension;
+    match db::lock(&s.db)
+        .query_row(
+            &format!("SELECT {COLS} FROM station WHERE id=?1"),
+            [id],
+            station_from_row,
+        )
+        .optional()
+    {
+        Ok(Some(st)) => Json(st).into_response(),
+        Ok(None) => err(StatusCode::NOT_FOUND, "no such station"),
+        Err(e) => internal(e),
+    }
+}
+
 pub async fn delete_station(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
     match db::lock(&s.db).execute("DELETE FROM station WHERE id=?1", [id]) {
         Ok(0) => err(StatusCode::NOT_FOUND, "no such station"),

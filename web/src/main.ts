@@ -127,8 +127,17 @@ async function startPlayer() {
 function connectEvents() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/v1/events?client_id=${clientId}`);
   ws.onmessage = (ev) => {
-    const msg = JSON.parse(ev.data as string) as { type: string; action?: string; target?: string | null; track_id?: string | null; volume?: number | null; session?: SessionSnapshot };
+    const msg = JSON.parse(ev.data as string) as { type: string; action?: string; target?: string | null; track_id?: string | null; station_id?: string | null; volume?: number | null; session?: SessionSnapshot };
     if (msg.type !== "command" || msg.target !== clientId || !webamp) return;
+    // `play` that names something to play: start that station or track
+    if (msg.action === "play" && msg.station_id) {
+      void api.station(msg.station_id).then((st) => playStation(st)).catch(() => undefined);
+      return;
+    }
+    if (msg.action === "play" && msg.track_id) {
+      void api.track(msg.track_id).then((t) => { remember([t]); stAudio().pause(); webamp?.setTracksToPlay([toWebamp(t)]); }).catch(() => undefined);
+      return;
+    }
     // a station is the active source if it is playing, or paused after having played while Webamp is not
     const stationActive = currentStation !== null && (!stAudio().paused || (stAudio().currentTime > 0 && webamp.getMediaStatus() !== "PLAYING"));
     if (stationActive) {

@@ -86,6 +86,7 @@ check(after.state === "paused", `player obeyed the command (state ${after.state}
 
 // ---- radio stations: add one through the API, find it in the UI, play it, control it ----
 const addRes = await fetch(`${base}/v1/stations`, { method: "POST", headers: auth, body: JSON.stringify({ name: "Smoke Test FM", url: stationUrl, category: "Music" }) });
+const byNameBefore = await addRes.clone().json();
 check(addRes.status === 201, "a station can be added through the API");
 await page.reload();
 await page.waitForSelector("#app", { state: "visible" });
@@ -106,6 +107,13 @@ const pause2 = await fetch(`${base}/v1/session`, { method: "POST", headers: auth
 await new Promise((r) => setTimeout(r, 1500));
 const stPaused = await page.evaluate(() => document.getElementById("st-audio").paused);
 check(pause2.status === 202 && stPaused, "a remote pause stops the station");
+// the widget's "play this station": a remote command that starts a station in the player
+await page.evaluate(() => document.getElementById("st-audio").pause());
+await new Promise((r) => setTimeout(r, 500));
+const stId = byNameBefore?.id;
+const playCmd = await fetch(`${base}/v1/session`, { method: "POST", headers: auth, body: JSON.stringify({ action: "play", station_id: stId }) });
+await page.waitForFunction(() => { const a = document.getElementById("st-audio"); return !a.paused && a.currentTime > 0; }, null, { timeout: 15000 }).catch(() => {});
+check(playCmd.status === 202 && (await page.evaluate(() => !document.getElementById("st-audio").paused)), "a remote play command with a station id starts that station");
 const dead = await fetch(`${base}/v1/stations`, { method: "POST", headers: auth, body: JSON.stringify({ name: "Dead FM", url: "http://127.0.0.1:9/none" }) });
 const job = await (await fetch(`${base}/v1/jobs`, { method: "POST", headers: auth, body: JSON.stringify({ kind: "check_stations" }) })).json();
 let res;

@@ -206,8 +206,44 @@ pub async fn post_session(State(s): State<AppState>, Json(b): Json<SessionBody>)
             if b.action == "volume" && !b.volume.is_some_and(|v| (0.0..=1.0).contains(&v)) {
                 return err(StatusCode::BAD_REQUEST, "volume must be between 0 and 1");
             }
+            // `play` may name what to play: a track or a station, never both, and it must exist.
+            if b.track_id.is_some() && b.station_id.is_some() {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "name a track or a station, not both",
+                );
+            }
+            if b.action != "play" && (b.track_id.is_some() || b.station_id.is_some()) {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "only play takes a track_id or station_id",
+                );
+            }
+            for (what, table, value) in [
+                ("track", "track", &b.track_id),
+                ("station", "station", &b.station_id),
+            ] {
+                if let Some(v) = value {
+                    let Ok(id) = v.parse::<i64>() else {
+                        return err(
+                            StatusCode::BAD_REQUEST,
+                            &format!("{what}_id is not a valid id"),
+                        );
+                    };
+                    match db::lock(&s.db)
+                        .query_row(&format!("SELECT 1 FROM {table} WHERE id=?1"), [id], |_| {
+                            Ok(())
+                        })
+                        .optional()
+                    {
+                        Ok(Some(())) => {}
+                        Ok(None) => return err(StatusCode::NOT_FOUND, &format!("no such {what}")),
+                        Err(e) => return internal(e),
+                    }
+                }
+            }
             let _ = s.events.send(
-                json!({"type": "command", "action": b.action, "track_id": b.track_id, "volume": b.volume, "target": target})
+                json!({"type": "command", "action": b.action, "track_id": b.track_id, "station_id": b.station_id, "volume": b.volume, "target": target})
                     .to_string(),
             );
             (StatusCode::ACCEPTED, Json(session_json(&s))).into_response()
