@@ -55,8 +55,12 @@ Exit: play a local album in the browser from another machine; the widget shows n
 - [ ] Station table seeded from `data/stations/trayfm-stations.txt`; add `data/` to the image
 - [ ] Liveness check job for the stream URLs; dead ones flagged, not deleted
 - [ ] `GET /v1/stations` returns the upstream URL; the client plays it directly (no proxying)
-- [ ] The Omarchy radio (Q3)
+- [x] The Omarchy radio (Q3): `https://radio.cliamp.stream/omarchy/stream` is in `data/stations/museq-stations.txt`
+- [ ] Remote "play this station" command through `POST /v1/session` (needed by a bar widget; see `docs/PLUGINS.md`)
 Exit: browser plays a station from the list; a dead URL shows an error and nothing crashes.
+
+## Side track: Omarchy plugin (after phase 2)
+First-party bar widget in its own repository, built from the findings in `docs/PLUGINS.md`: service + bar-widget, session polling, token file, station picker. Needs the station command above, cover art and position in the session.
 
 ## Phase 3: metadata, duplicates, fetch, extension (~4-6 weeks)
 Jobs retry with backoff and keep partial results (`attempts`).
