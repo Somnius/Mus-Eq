@@ -43,9 +43,22 @@ CREATE TABLE job(
 );
 ";
 
+pub fn search_text(title: &str, artist: Option<&str>, album: Option<&str>) -> String {
+    crate::text::fold(&format!(
+        "{title}\n{}\n{}",
+        artist.unwrap_or(""),
+        album.unwrap_or("")
+    ))
+}
+
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     init(conn)
+}
+
+/// Lock the database; a panic elsewhere must not poison every later request.
+pub fn lock(m: &std::sync::Mutex<Connection>) -> std::sync::MutexGuard<'_, Connection> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 pub fn open_in_memory() -> rusqlite::Result<Connection> {
@@ -59,6 +72,21 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
     if version < 1 {
         conn.execute_batch(SCHEMA_V1)?;
         conn.pragma_update(None, "user_version", 1)?;
+    }
+    if version < 2 {
+        // Accent- and case-insensitive search text (SQLite LIKE only folds ASCII case).
+        conn.execute_batch("ALTER TABLE track ADD COLUMN search_text TEXT NOT NULL DEFAULT '';")?;
+        let rows: Vec<(i64, String, Option<String>, Option<String>)> = conn
+            .prepare("SELECT id, title, artist, album FROM track")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        for (id, title, artist, album) in rows {
+            conn.execute(
+                "UPDATE track SET search_text=?1 WHERE id=?2",
+                rusqlite::params![search_text(&title, artist.as_deref(), album.as_deref()), id],
+            )?;
+        }
+        conn.pragma_update(None, "user_version", 2)?;
     }
     // A job left "running" by a crash will never finish.
     conn.execute("UPDATE job SET state='failed', error='interrupted by restart' WHERE state IN ('queued','running')", [])?;

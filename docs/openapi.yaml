@@ -4,7 +4,7 @@ info:
   version: 0.1.0
   description: >-
     Draft v1 contract for the MusEq server. Contract first: clients are built
-    against this file. Only /v1/health is implemented so far.
+    against this file. Implemented: health, tracks, audio, playlists, scan jobs. The rest (session, events, stations, radio, skins, other job kinds) is still draft.
 servers:
   - url: http://127.0.0.1:8080
 security:
@@ -385,9 +385,9 @@ components:
       properties:
         id: { type: string }
         title: { type: string }
-        artist: { type: string }
-        album: { type: string }
-        duration_ms: { type: integer }
+        artist: { type: [string, "null"] }
+        album: { type: [string, "null"] }
+        duration_ms: { type: [integer, "null"] }
         preferred_file_id: { type: string }
     Playlist:
       type: object
@@ -425,8 +425,8 @@ components:
         kind: { type: string, enum: [scan, fetch, tag, fingerprint] }
         state: { type: string, enum: [queued, running, done, failed] }
         attempts: { type: integer }
-        result: { type: object, additionalProperties: true }
-        error: { type: string }
+        result: { type: [object, "null"], additionalProperties: true }
+        error: { type: [string, "null"] }
         result_track_id: { type: string }
     Skin:
       type: object

@@ -100,11 +100,11 @@ async fn health_is_open_everything_else_needs_the_token() {
 async fn scan_finds_tags_and_durations_and_search_works() {
     let app = app_for(fixtures());
     let r = scan_and_wait(&app).await;
-    assert_eq!(r["added"], 3, "{r}");
+    assert_eq!(r["added"], 4, "{r}");
     assert_eq!(r["errors"], 0);
 
     let (_, all) = json_call(&app, Method::GET, "/v1/tracks", None).await;
-    assert_eq!(all["total"], 3);
+    assert_eq!(all["total"], 4);
     let items = all["items"].as_array().unwrap();
     let titles: Vec<&str> = items.iter().map(|t| t["title"].as_str().unwrap()).collect();
     assert!(
@@ -122,9 +122,19 @@ async fn scan_finds_tags_and_durations_and_search_works() {
     assert_eq!(one["total"], 2);
     let (_, none) = json_call(&app, Method::GET, "/v1/tracks?q=%25", None).await;
     assert_eq!(none["total"], 0, "a literal % must not act as a wildcard");
+    // Greek: case and accents don't matter, final sigma folds
+    for q in [
+        "%CE%BB%CE%AC%CE%BC%CF%88%CE%B7",
+        "%CE%9B%CE%91%CE%9C%CE%A8%CE%97",
+        "%CE%BB%CE%B1%CE%BC%CF%88%CE%B7",
+        "%CE%B5%CE%BB%CE%BB%CE%B7%CE%BD%CE%B9%CE%BA%CE%BF%CF%82",
+    ] {
+        let (_, g) = json_call(&app, Method::GET, &format!("/v1/tracks?q={q}"), None).await;
+        assert_eq!(g["total"], 1, "query {q}: {g}");
+    }
     let (_, page) = json_call(&app, Method::GET, "/v1/tracks?limit=1&offset=1", None).await;
     assert_eq!(page["items"].as_array().unwrap().len(), 1);
-    assert_eq!(page["total"], 3);
+    assert_eq!(page["total"], 4);
 }
 
 #[tokio::test]
@@ -199,7 +209,7 @@ async fn rescan_skips_unchanged_and_drops_vanished_files() {
             r["unchanged"].as_i64(),
             r["removed"].as_i64()
         ),
-        (Some(0), Some(3), Some(0)),
+        (Some(0), Some(4), Some(0)),
         "{r}"
     );
 
@@ -207,7 +217,7 @@ async fn rescan_skips_unchanged_and_drops_vanished_files() {
     let r = scan_and_wait(&app).await;
     assert_eq!(r["removed"], 1, "{r}");
     let (_, all) = json_call(&app, Method::GET, "/v1/tracks", None).await;
-    assert_eq!(all["total"], 2);
+    assert_eq!(all["total"], 3);
 }
 
 #[tokio::test]

@@ -13,6 +13,7 @@ symphonia = { version = "0.6.1", features = ["all"] }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["fs"] }
+unicode-normalization = "0.1.26"
 
 [dev-dependencies]
 http-body-util = "0.1.5"

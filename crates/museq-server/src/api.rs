@@ -129,6 +129,7 @@ async fn search_tracks(State(s): State<AppState>, Query(q): Query<SearchQuery>) 
     let pattern =
         q.q.filter(|t| !t.is_empty())
             .map(|t| {
+                let t = crate::text::fold(&t);
                 format!(
                     "%{}%",
                     t.replace('\\', "\\\\")
@@ -137,9 +138,8 @@ async fn search_tracks(State(s): State<AppState>, Query(q): Query<SearchQuery>) 
                 )
             })
             .unwrap_or_else(|| "%".to_string());
-    let conn = s.db.lock().unwrap();
-    let where_ =
-        "(title LIKE ?1 ESCAPE '\\' OR artist LIKE ?1 ESCAPE '\\' OR album LIKE ?1 ESCAPE '\\')";
+    let conn = crate::db::lock(&s.db);
+    let where_ = "search_text LIKE ?1 ESCAPE '\\'";
     let total: i64 = match conn.query_row(
         &format!("SELECT COUNT(*) FROM track WHERE {where_}"),
         [&pattern],
@@ -162,7 +162,7 @@ async fn search_tracks(State(s): State<AppState>, Query(q): Query<SearchQuery>) 
 }
 
 async fn get_track(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
-    let conn = s.db.lock().unwrap();
+    let conn = crate::db::lock(&s.db);
     match conn
         .query_row(
             &format!("SELECT {TRACK_COLS} FROM track WHERE id=?1"),
@@ -198,7 +198,7 @@ async fn audio(
         );
     }
     let rel: Option<String> = {
-        let conn = s.db.lock().unwrap();
+        let conn = crate::db::lock(&s.db);
         match conn
             .query_row("SELECT path FROM file WHERE id=?1", [file_id], |r| r.get(0))
             .optional()
@@ -249,7 +249,7 @@ fn load_playlist(conn: &Connection, id: i64) -> rusqlite::Result<Option<Playlist
 }
 
 async fn list_playlists(State(s): State<AppState>) -> Response {
-    let conn = s.db.lock().unwrap();
+    let conn = crate::db::lock(&s.db);
     let ids: rusqlite::Result<Vec<i64>> = conn
         .prepare("SELECT id FROM playlist ORDER BY id")
         .and_then(|mut st| st.query_map([], |r| r.get(0))?.collect());
@@ -280,7 +280,7 @@ async fn create_playlist(State(s): State<AppState>, Json(body): Json<NewPlaylist
     if name.is_empty() {
         return err(StatusCode::BAD_REQUEST, "name must not be empty");
     }
-    let conn = s.db.lock().unwrap();
+    let conn = crate::db::lock(&s.db);
     if let Err(e) = conn.execute(
         "INSERT INTO playlist(name, extend) VALUES(?1, ?2)",
         params![name, body.extend],
@@ -296,7 +296,7 @@ async fn create_playlist(State(s): State<AppState>, Json(body): Json<NewPlaylist
 }
 
 async fn get_playlist(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
-    let conn = s.db.lock().unwrap();
+    let conn = crate::db::lock(&s.db);
     match load_playlist(&conn, id) {
         Ok(Some(p)) => Json(p).into_response(),
         Ok(None) => err(StatusCode::NOT_FOUND, "no such playlist"),
@@ -305,7 +305,7 @@ async fn get_playlist(State(s): State<AppState>, Path(id): Path<i64>) -> Respons
 }
 
 async fn delete_playlist(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
-    let conn = s.db.lock().unwrap();
+    let conn = crate::db::lock(&s.db);
     match conn.execute("DELETE FROM playlist WHERE id=?1", [id]) {
         Ok(0) => err(StatusCode::NOT_FOUND, "no such playlist"),
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
@@ -336,7 +336,7 @@ async fn add_item(
     let Some(track_id) = parse_track_id(&body.track_id) else {
         return err(StatusCode::BAD_REQUEST, "track_id is not a valid id");
     };
-    let conn = s.db.lock().unwrap();
+    let conn = crate::db::lock(&s.db);
     match load_playlist(&conn, id) {
         Ok(Some(_)) => {}
         Ok(None) => return err(StatusCode::NOT_FOUND, "no such playlist"),
@@ -375,7 +375,7 @@ async fn set_items(
             None => return err(StatusCode::BAD_REQUEST, "track_ids contains an invalid id"),
         }
     }
-    let mut conn = s.db.lock().unwrap();
+    let mut conn = crate::db::lock(&s.db);
     match load_playlist(&conn, id) {
         Ok(Some(_)) => {}
         Ok(None) => return err(StatusCode::NOT_FOUND, "no such playlist"),
@@ -463,7 +463,7 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
         _ => return err(StatusCode::BAD_REQUEST, "unknown job kind"),
     }
     let id = {
-        let conn = s.db.lock().unwrap();
+        let conn = crate::db::lock(&s.db);
         let busy: rusqlite::Result<bool> = conn
             .query_row(
                 "SELECT 1 FROM job WHERE kind='scan' AND state IN ('queued','running')",
@@ -483,19 +483,29 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
         conn.last_insert_rowid()
     };
     let (db, root) = (s.db.clone(), s.root.clone());
-    tokio::task::spawn_blocking(move || {
-        let _ = db.lock().unwrap().execute(
+    let task_db = db.clone();
+    let handle = tokio::task::spawn_blocking(move || {
+        let _ = crate::db::lock(&task_db).execute(
             "UPDATE job SET state='running', attempts=attempts+1 WHERE id=?1",
             [id],
         );
-        let stats = scan::scan(&db, &root);
+        let stats = scan::scan(&task_db, &root);
         let result = serde_json::to_string(&stats).unwrap_or_default();
-        let _ = db.lock().unwrap().execute(
+        let _ = crate::db::lock(&task_db).execute(
             "UPDATE job SET state='done', result=?2 WHERE id=?1",
             params![id, result],
         );
     });
-    let conn = s.db.lock().unwrap();
+    // If the scan panics, mark the job failed so later scans aren't blocked by a ghost.
+    tokio::spawn(async move {
+        if handle.await.is_err() {
+            let _ = crate::db::lock(&db).execute(
+                "UPDATE job SET state='failed', error='scan crashed' WHERE id=?1",
+                [id],
+            );
+        }
+    });
+    let conn = crate::db::lock(&s.db);
     match load_job(&conn, id) {
         Ok(Some(j)) => (StatusCode::ACCEPTED, Json(j)).into_response(),
         Ok(None) => internal("job vanished"),
@@ -504,7 +514,7 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
 }
 
 async fn get_job(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
-    let conn = s.db.lock().unwrap();
+    let conn = crate::db::lock(&s.db);
     match load_job(&conn, id) {
         Ok(Some(j)) => Json(j).into_response(),
         Ok(None) => err(StatusCode::NOT_FOUND, "no such job"),

@@ -154,9 +154,7 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
         };
         let (bytes, mtime) = (meta.len() as i64, mtime_secs(&meta));
 
-        let existing: Option<(i64, i64, i64)> = db
-            .lock()
-            .unwrap()
+        let existing: Option<(i64, i64, i64)> = crate::db::lock(db)
             .query_row(
                 "SELECT id, bytes, mtime FROM file WHERE path=?1",
                 [&rel],
@@ -176,7 +174,7 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
             stats.errors += 1;
             continue;
         };
-        let p = probe(&path);
+        let p = std::panic::catch_unwind(|| probe(&path)).unwrap_or_default();
         let codec = path
             .extension()
             .and_then(|e| e.to_str())
@@ -186,8 +184,9 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| rel.clone())
         });
+        let search = crate::db::search_text(&title, p.artist.as_deref(), p.album.as_deref());
 
-        let conn = db.lock().unwrap();
+        let conn = crate::db::lock(db);
         let res: rusqlite::Result<()> = (|| {
             match existing {
                 Some((id, _, _)) => {
@@ -196,8 +195,8 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
                         params![sha, bytes, mtime, codec, p.duration_ms, id],
                     )?;
                     conn.execute(
-                        "UPDATE track SET title=?1, artist=?2, album=?3, duration_ms=?4 WHERE preferred_file_id=?5",
-                        params![title, p.artist, p.album, p.duration_ms, id],
+                        "UPDATE track SET title=?1, artist=?2, album=?3, duration_ms=?4, search_text=?6 WHERE preferred_file_id=?5",
+                        params![title, p.artist, p.album, p.duration_ms, id, search],
                     )?;
                 }
                 None => {
@@ -207,8 +206,8 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
                     )?;
                     let id = conn.last_insert_rowid();
                     conn.execute(
-                        "INSERT INTO track(title, artist, album, duration_ms, preferred_file_id) VALUES(?1,?2,?3,?4,?5)",
-                        params![title, p.artist, p.album, p.duration_ms, id],
+                        "INSERT INTO track(title, artist, album, duration_ms, preferred_file_id, search_text) VALUES(?1,?2,?3,?4,?5,?6)",
+                        params![title, p.artist, p.album, p.duration_ms, id, search],
                     )?;
                 }
             }
@@ -222,7 +221,7 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
     }
 
     // Drop files that vanished from disk (their tracks go with them).
-    let conn = db.lock().unwrap();
+    let conn = crate::db::lock(db);
     let known: Vec<(i64, String)> = conn
         .prepare("SELECT id, path FROM file")
         .and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect())

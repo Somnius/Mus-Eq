@@ -55,7 +55,7 @@ Rules: byte identity = sha256. Song identity for dedupe = fingerprint (later); u
 - Audio ids are **file ids**. Playlists and the session refer to track ids; the server picks the track's preferred file.
 - `POST /v1/jobs` with `kind` scan|fetch|tag|fingerprint; `fetch` answers 403 unless enabled in config.
 - Errors are `{ "error": "message" }` with a normal HTTP status.
-- Implemented so far: `GET /v1/health` only.
+- Implemented so far: health, tracks, audio (Range), playlists, scan jobs. Search is case- and accent-insensitive (Greek tonos and final sigma fold) through a `search_text` column.
 
 ## Modules
 1 api · 2 library (scan, tags, hash, quality) · 3 fetch (Spotify link → ISRC/title via Deezer → YouTube Music search → yt-dlp → tag+import) · 4 metadata · 5 dedupe (Chromaprint similarity, keep best, never auto-delete) · 6 playlistext (same genre/style, skip artists already present, introduce new; local pool first, online suggestions only once fetch exists) · 7 radio · 8 transcode · 9 offline (manifest diff, resume) · 10 auth · clients: web, android, desktop, widgets (Omarchy bar widget reading now-playing).

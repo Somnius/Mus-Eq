@@ -27,6 +27,7 @@ Exit met: container answers `/v1/health` from the host (Docker; Podman untested)
 - [x] 6 integration tests, clippy clean; verified in Docker: 401 without token, scan, search, 206 Range, catalog survives a restart, token not in logs
 Image adds: nothing.
 Exit met: with `curl` and a token a mixed folder scans, searches and streams with Range, and a restart keeps the catalog. Not yet checked: from another machine on the LAN (only localhost was tried), CI on GitHub for this commit.
+Follow-ups done the same day: accent/case-insensitive Greek search (`search_text`, migration v2), a crashed scan now marks its job failed instead of blocking later scans, nullable fields fixed in the contract. Not tested: the scan-panic path (only reasoned), and a request from another machine on the LAN (owner to try: `curl http://<server-ip>:8080/v1/health` after publishing the port beyond localhost).
 Known gaps carried to later: artist/album are plain text columns (own tables when dedupe needs them); `<audio>` elements can't send an Authorization header, so phase 1b needs a cookie or a short-lived signed URL for audio; the DB mutex is held for short queries only, fine for one owner.
 
 ## Phase 1b: web client + session (~2 weeks)
