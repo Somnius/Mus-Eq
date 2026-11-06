@@ -18,8 +18,15 @@ async fn main() {
     });
     if let Some(seed) = &cfg.stations_seed {
         match std::fs::read_to_string(seed) {
-            Ok(text) => match museq_server::stations::import(&conn, "trayfm", &museq_server::stations::parse_list(&text)) {
-                Ok(n) => println!("museq-server: {n} new stations imported from {}", seed.display()),
+            Ok(text) => match museq_server::stations::import(
+                &conn,
+                "trayfm",
+                &museq_server::stations::parse_list(&text),
+            ) {
+                Ok(n) => println!(
+                    "museq-server: {n} new stations imported from {}",
+                    seed.display()
+                ),
                 Err(e) => eprintln!("museq-server: station import failed: {e}"),
             },
             Err(e) => eprintln!("museq-server: cannot read {}: {e}", seed.display()),

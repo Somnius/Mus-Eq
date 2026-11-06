@@ -49,7 +49,11 @@ pub fn parse_list(text: &str) -> Vec<SeedStation> {
             if name.is_empty() || !valid_url(url) {
                 return None;
             }
-            Some(SeedStation { name: name.to_string(), category: category_of(cat), url: url.to_string() })
+            Some(SeedStation {
+                name: name.to_string(),
+                category: category_of(cat),
+                url: url.to_string(),
+            })
         })
         .collect()
 }
@@ -61,7 +65,13 @@ pub fn import(conn: &Connection, source: &str, list: &[SeedStation]) -> rusqlite
         added += conn.execute(
             "INSERT INTO station(name, category, url, source, search_text) VALUES(?1,?2,?3,?4,?5)
              ON CONFLICT(url) DO NOTHING",
-            params![s.name, s.category, s.url, source, crate::text::fold(&s.name)],
+            params![
+                s.name,
+                s.category,
+                s.url,
+                source,
+                crate::text::fold(&s.name)
+            ],
         )?;
     }
     Ok(added)
@@ -110,31 +120,53 @@ pub struct ListQuery {
 pub async fn list_stations(State(s): State<AppState>, Query(q): Query<ListQuery>) -> Response {
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     let offset = q.offset.unwrap_or(0).max(0);
-    let pattern = q
-        .q
-        .filter(|t| !t.is_empty())
-        .map(|t| {
-            let t = crate::text::fold(&t);
-            format!("%{}%", t.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"))
-        })
-        .unwrap_or_else(|| "%".into());
-    let category = q.category.filter(|c| !c.is_empty()).map(|c| category_of(&c));
+    let pattern =
+        q.q.filter(|t| !t.is_empty())
+            .map(|t| {
+                let t = crate::text::fold(&t);
+                format!(
+                    "%{}%",
+                    t.replace('\\', "\\\\")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_")
+                )
+            })
+            .unwrap_or_else(|| "%".into());
+    let category = q
+        .category
+        .filter(|c| !c.is_empty())
+        .map(|c| category_of(&c));
     let alive_clause = match q.alive.as_deref() {
         Some("true") => " AND alive = 1",
         Some("false") => " AND alive = 0",
         Some("unknown") => " AND alive IS NULL",
         None | Some("") => "",
-        Some(_) => return err(StatusCode::BAD_REQUEST, "alive must be true, false or unknown"),
+        Some(_) => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "alive must be true, false or unknown",
+            );
+        }
     };
-    let where_ = format!("search_text LIKE ?1 ESCAPE '\\' AND (?2 IS NULL OR category = ?2){alive_clause}");
+    let where_ =
+        format!("search_text LIKE ?1 ESCAPE '\\' AND (?2 IS NULL OR category = ?2){alive_clause}");
     let conn = db::lock(&s.db);
-    let total: i64 = match conn.query_row(&format!("SELECT COUNT(*) FROM station WHERE {where_}"), params![pattern, category], |r| r.get(0)) {
+    let total: i64 = match conn.query_row(
+        &format!("SELECT COUNT(*) FROM station WHERE {where_}"),
+        params![pattern, category],
+        |r| r.get(0),
+    ) {
         Ok(n) => n,
         Err(e) => return internal(e),
     };
     let items: rusqlite::Result<Vec<Station>> = conn
-        .prepare(&format!("SELECT {COLS} FROM station WHERE {where_} ORDER BY name, id LIMIT ?3 OFFSET ?4"))
-        .and_then(|mut st| st.query_map(params![pattern, category, limit, offset], station_from_row)?.collect());
+        .prepare(&format!(
+            "SELECT {COLS} FROM station WHERE {where_} ORDER BY name, id LIMIT ?3 OFFSET ?4"
+        ))
+        .and_then(|mut st| {
+            st.query_map(params![pattern, category, limit, offset], station_from_row)?
+                .collect()
+        });
     match items {
         Ok(items) => Json(json!({"items": items, "total": total})).into_response(),
         Err(e) => internal(e),
@@ -164,10 +196,17 @@ pub async fn add_station(State(s): State<AppState>, Json(b): Json<NewStation>) -
         params![name, category, url, crate::text::fold(&name)],
     );
     match inserted {
-        Ok(0) => err(StatusCode::CONFLICT, "a station with that URL already exists"),
+        Ok(0) => err(
+            StatusCode::CONFLICT,
+            "a station with that URL already exists",
+        ),
         Ok(_) => {
             let id = conn.last_insert_rowid();
-            match conn.query_row(&format!("SELECT {COLS} FROM station WHERE id=?1"), [id], station_from_row) {
+            match conn.query_row(
+                &format!("SELECT {COLS} FROM station WHERE id=?1"),
+                [id],
+                station_from_row,
+            ) {
                 Ok(st) => (StatusCode::CREATED, Json(st)).into_response(),
                 Err(e) => internal(e),
             }
@@ -196,16 +235,32 @@ pub struct Verdict {
 }
 
 fn dead(msg: impl Into<String>) -> Verdict {
-    Verdict { alive: false, error: Some(msg.into()) }
+    Verdict {
+        alive: false,
+        error: Some(msg.into()),
+    }
 }
 
 fn audio_like(content_type: &str, url: &str) -> bool {
     let ct = content_type.to_ascii_lowercase();
-    let path = url.split(['?', '#']).next().unwrap_or(url).to_ascii_lowercase();
+    let path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .to_ascii_lowercase();
     ct.is_empty()
-        || ["audio/", "application/ogg", "application/octet-stream", "mpegurl", "binary/octet-stream", "video/mp2t", "x-scpls", "application/vnd.apple"]
-            .iter()
-            .any(|k| ct.contains(k))
+        || [
+            "audio/",
+            "application/ogg",
+            "application/octet-stream",
+            "mpegurl",
+            "binary/octet-stream",
+            "video/mp2t",
+            "x-scpls",
+            "application/vnd.apple",
+        ]
+        .iter()
+        .any(|k| ct.contains(k))
         || path.ends_with(".m3u8")
         || path.ends_with(".pls")
         || path.ends_with(".m3u")
@@ -214,14 +269,27 @@ fn audio_like(content_type: &str, url: &str) -> bool {
 /// Old Shoutcast servers answer `ICY 200 OK`, which HTTP clients reject; check those by hand.
 async fn check_raw_http(url: &str) -> Verdict {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let Some(rest) = url.strip_prefix("http://") else { return dead("not plain http") };
-    let (hostport, path) = rest.split_once('/').map(|(h, p)| (h, format!("/{p}"))).unwrap_or((rest, "/".into()));
-    let addr = if hostport.contains(':') { hostport.to_string() } else { format!("{hostport}:80") };
+    let Some(rest) = url.strip_prefix("http://") else {
+        return dead("not plain http");
+    };
+    let (hostport, path) = rest
+        .split_once('/')
+        .map(|(h, p)| (h, format!("/{p}")))
+        .unwrap_or((rest, "/".into()));
+    let addr = if hostport.contains(':') {
+        hostport.to_string()
+    } else {
+        format!("{hostport}:80")
+    };
     let host = hostport.split(':').next().unwrap_or(hostport);
     let run = async {
-        let mut sock = tokio::net::TcpStream::connect(&addr).await.map_err(|e| e.to_string())?;
+        let mut sock = tokio::net::TcpStream::connect(&addr)
+            .await
+            .map_err(|e| e.to_string())?;
         let req = format!("GET {path} HTTP/1.0\\r\\nHost: {host}\\r\\nUser-Agent: museq-station-check\\r\\nAccept: */*\\r\\n\\r\\n").replace("\\r\\n", "\r\n");
-        sock.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+        sock.write_all(req.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
         let mut buf = [0u8; 256];
         let n = sock.read(&mut buf).await.map_err(|e| e.to_string())?;
         Ok::<String, String>(String::from_utf8_lossy(&buf[..n]).into_owned())
@@ -232,9 +300,15 @@ async fn check_raw_http(url: &str) -> Verdict {
         Ok(Ok(head)) => {
             let first = head.lines().next().unwrap_or("");
             if first.starts_with("ICY 200") || first.contains(" 200") {
-                Verdict { alive: true, error: None }
+                Verdict {
+                    alive: true,
+                    error: None,
+                }
             } else {
-                dead(format!("unexpected reply: {}", first.chars().take(60).collect::<String>()))
+                dead(format!(
+                    "unexpected reply: {}",
+                    first.chars().take(60).collect::<String>()
+                ))
             }
         }
     }
@@ -242,9 +316,19 @@ async fn check_raw_http(url: &str) -> Verdict {
 
 pub async fn check_one(client: &reqwest::Client, url: &str) -> Verdict {
     let fetch = async {
-        let mut resp = client.get(url).header("User-Agent", "museq-station-check").header("Icy-MetaData", "0").send().await?;
+        let mut resp = client
+            .get(url)
+            .header("User-Agent", "museq-station-check")
+            .header("Icy-MetaData", "0")
+            .send()
+            .await?;
         let status = resp.status();
-        let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         if !(status.is_success()) {
             return Ok::<Verdict, reqwest::Error>(dead(format!("HTTP {}", status.as_u16())));
         }
@@ -253,7 +337,10 @@ pub async fn check_one(client: &reqwest::Client, url: &str) -> Verdict {
         }
         // A live stream must actually send bytes.
         match resp.chunk().await? {
-            Some(c) if !c.is_empty() => Ok(Verdict { alive: true, error: None }),
+            Some(c) if !c.is_empty() => Ok(Verdict {
+                alive: true,
+                error: None,
+            }),
             _ => Ok(dead("connected but sent no audio")),
         }
     };
@@ -280,7 +367,11 @@ pub async fn check_all(db: std::sync::Arc<std::sync::Mutex<Connection>>) -> serd
             .and_then(|mut st| st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect())
             .unwrap_or_default()
     };
-    let client = match reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).redirect(reqwest::redirect::Policy::limited(3)).build() {
+    let client = match reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .build()
+    {
         Ok(c) => c,
         Err(e) => return json!({"error": e.to_string()}),
     };
@@ -291,7 +382,10 @@ pub async fn check_all(db: std::sync::Arc<std::sync::Mutex<Connection>>) -> serd
         tasks.spawn(async move {
             let _permit = sem.acquire().await;
             let v = check_one(&client, &url).await;
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
             let _ = db::lock(&db).execute(
                 "UPDATE station SET alive=?1, checked_at=?2, error=?3 WHERE id=?4",
                 params![v.alive, now, v.error, id],

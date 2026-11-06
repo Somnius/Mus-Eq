@@ -96,8 +96,14 @@ pub fn router(state: AppState) -> Router {
             get(crate::skins::list_skins).post(crate::skins::upload_skin),
         )
         .route("/v1/skins/{id}", get(crate::skins::get_skin))
-        .route("/v1/stations", get(crate::stations::list_stations).post(crate::stations::add_station))
-        .route("/v1/stations/{id}", axum::routing::delete(crate::stations::delete_station))
+        .route(
+            "/v1/stations",
+            get(crate::stations::list_stations).post(crate::stations::add_station),
+        )
+        .route(
+            "/v1/stations/{id}",
+            axum::routing::delete(crate::stations::delete_station),
+        )
         .layer(DefaultBodyLimit::max(crate::skins::MAX_SKIN_BYTES))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth));
     let mut app = Router::new()
@@ -600,8 +606,8 @@ struct NewJob {
 }
 
 async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Response {
-    match body.kind.as_str() {
-        "scan" => {}
+    let kind = match body.kind.as_str() {
+        k @ ("scan" | "check_stations") => k.to_string(),
         "fetch" => {
             return err(
                 StatusCode::FORBIDDEN,
@@ -615,47 +621,64 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
             );
         }
         _ => return err(StatusCode::BAD_REQUEST, "unknown job kind"),
-    }
+    };
     let id = {
+        // Check and insert under one lock, so two requests can't both start the same kind of job.
         let conn = crate::db::lock(&s.db);
         let busy: rusqlite::Result<bool> = conn
             .query_row(
-                "SELECT 1 FROM job WHERE kind='scan' AND state IN ('queued','running')",
-                [],
+                "SELECT 1 FROM job WHERE kind=?1 AND state IN ('queued','running')",
+                [&kind],
                 |_| Ok(()),
             )
             .optional()
             .map(|v| v.is_some());
         match busy {
             Ok(false) => {}
-            Ok(true) => return err(StatusCode::CONFLICT, "a scan is already running"),
+            Ok(true) => return err(StatusCode::CONFLICT, "that job is already running"),
             Err(e) => return internal(e),
         }
-        if let Err(e) = conn.execute("INSERT INTO job(kind, state) VALUES('scan', 'queued')", []) {
+        if let Err(e) = conn.execute("INSERT INTO job(kind, state) VALUES(?1, 'queued')", [&kind]) {
             return internal(e);
         }
         conn.last_insert_rowid()
     };
-    let (db, root) = (s.db.clone(), s.root.clone());
+    let db = s.db.clone();
     let task_db = db.clone();
-    let handle = tokio::task::spawn_blocking(move || {
+    let root = s.root.clone();
+    let work = tokio::spawn(async move {
         let _ = crate::db::lock(&task_db).execute(
             "UPDATE job SET state='running', attempts=attempts+1 WHERE id=?1",
             [id],
         );
-        let stats = scan::scan(&task_db, &root);
-        let result = serde_json::to_string(&stats).unwrap_or_default();
+        let result = if kind == "scan" {
+            let d = task_db.clone();
+            let stats = tokio::task::spawn_blocking(move || scan::scan(&d, &root))
+                .await
+                .map_err(|_| "scan crashed")?;
+            serde_json::to_string(&stats).map_err(|_| "cannot encode result")?
+        } else {
+            crate::stations::check_all(task_db.clone())
+                .await
+                .to_string()
+        };
         let _ = crate::db::lock(&task_db).execute(
             "UPDATE job SET state='done', result=?2 WHERE id=?1",
             params![id, result],
         );
+        Ok::<(), &'static str>(())
     });
-    // If the scan panics, mark the job failed so later scans aren't blocked by a ghost.
+    // If the job fails or panics, mark it failed so later runs aren't blocked by a ghost.
     tokio::spawn(async move {
-        if handle.await.is_err() {
+        let failure = match work.await {
+            Ok(Ok(())) => None,
+            Ok(Err(msg)) => Some(msg.to_string()),
+            Err(_) => Some("job crashed".to_string()),
+        };
+        if let Some(msg) = failure {
             let _ = crate::db::lock(&db).execute(
-                "UPDATE job SET state='failed', error='scan crashed' WHERE id=?1",
-                [id],
+                "UPDATE job SET state='failed', error=?2 WHERE id=?1",
+                params![id, msg],
             );
         }
     });
