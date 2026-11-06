@@ -2,6 +2,7 @@ target/
 .git/
 .env
 docs/
-data/
+data/*
+!data/stations
 web/node_modules/
 web/dist/

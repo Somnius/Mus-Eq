@@ -16,11 +16,17 @@ async fn main() {
         );
         std::process::exit(2);
     });
-    if let Some(seed) = &cfg.stations_seed {
+    for seed in &cfg.stations_seeds {
+        // the source label comes from the file name, so the original list stays identifiable
+        let source = if seed.to_string_lossy().contains("trayfm") {
+            "trayfm"
+        } else {
+            "museq"
+        };
         match std::fs::read_to_string(seed) {
             Ok(text) => match museq_server::stations::import(
                 &conn,
-                "trayfm",
+                source,
                 &museq_server::stations::parse_list(&text),
             ) {
                 Ok(n) => println!(

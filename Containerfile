@@ -19,8 +19,9 @@ RUN cargo build --release -p museq-server
 FROM debian:stable-slim
 COPY --from=build /src/target/release/museq-server /usr/local/bin/museq-server
 COPY --from=web /web/dist /usr/share/museq/web
+COPY data/stations /usr/share/museq/stations
 RUN mkdir /data /music && chown 65534:65534 /data
-ENV MUSEQ_BIND=0.0.0.0:8080 MUSEQ_DB=/data/museq.db MUSEQ_LIBRARY=/music MUSEQ_SKINS_DIR=/data/skins MUSEQ_WEB_DIR=/usr/share/museq/web
+ENV MUSEQ_BIND=0.0.0.0:8080 MUSEQ_DB=/data/museq.db MUSEQ_LIBRARY=/music MUSEQ_SKINS_DIR=/data/skins MUSEQ_WEB_DIR=/usr/share/museq/web MUSEQ_STATIONS_SEED=/usr/share/museq/stations/museq-stations.txt,/usr/share/museq/stations/trayfm-stations.txt
 VOLUME ["/data"]
 EXPOSE 8080
 USER 65534:65534

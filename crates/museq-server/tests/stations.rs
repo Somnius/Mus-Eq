@@ -197,6 +197,12 @@ async fn the_liveness_check_sorts_live_from_dead_without_crashing() {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         format!("http://{}/x", l.local_addr().unwrap()) // listener dropped: connection refused
     };
+    // a plain-http address that redirects to the real stream (as the Omarchy one does) is alive
+    let redirect_head: &'static str = Box::leak(
+        format!("HTTP/1.1 301 Moved Permanently\r\nLocation: {live}\r\nConnection: close\r\n\r\n")
+            .into_boxed_str(),
+    );
+    let redirect = fake(redirect_head, 0).await;
     let app = app();
     for (name, url) in [
         ("live", &live),
@@ -204,6 +210,7 @@ async fn the_liveness_check_sorts_live_from_dead_without_crashing() {
         ("html", &html),
         ("gone", &gone),
         ("refused", &refused),
+        ("redirect", &redirect),
     ] {
         let (s, _) = call(
             &app,
@@ -235,11 +242,12 @@ async fn the_liveness_check_sorts_live_from_dead_without_crashing() {
     }
     assert_eq!(
         result,
-        json!({"checked": 5, "alive": 2, "dead": 3}),
+        json!({"checked": 6, "alive": 3, "dead": 3}),
         "{result}"
     );
 
     let (_, all) = call(&app, Method::GET, "/v1/stations?limit=10", None).await;
+    assert!(all["items"].is_array(), "list answered: {all}");
     let by_name = |n: &str| {
         all["items"]
             .as_array()
@@ -255,6 +263,11 @@ async fn the_liveness_check_sorts_live_from_dead_without_crashing() {
         true,
         "ICY (old Shoutcast) servers count as alive"
     );
+    assert_eq!(
+        by_name("redirect")["alive"],
+        true,
+        "a redirect to a live stream is alive"
+    );
     assert_eq!(by_name("html")["alive"], false);
     assert!(
         by_name("html")["error"]
@@ -266,7 +279,7 @@ async fn the_liveness_check_sorts_live_from_dead_without_crashing() {
     assert_eq!(by_name("refused")["alive"], false);
     assert!(by_name("live")["checked_at"].as_i64().unwrap() > 0);
     let (_, alive) = call(&app, Method::GET, "/v1/stations?alive=true", None).await;
-    assert_eq!(alive["total"], 2);
+    assert_eq!(alive["total"], 3);
 }
 
 #[tokio::test]

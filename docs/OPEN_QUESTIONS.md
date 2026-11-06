@@ -3,7 +3,6 @@
 | # | Question | Default if unanswered | Blocks |
 |---|---|---|---|
 | Q2 | May fetch store audio from YouTube Music? (flag, off by default either way) | no | phase 3 |
-| Q3 | Which "Omarchy radio"? URL/path/plugin name. Nothing found by search or in `~/.config/omarchy`. | one hand-entered URL | phase 2 |
 | Q5 | Skin engine on native: Webamp in a WebView for v1, or a native renderer from day one? | WebView | phase 4 |
 | Q6 | Spotify: link resolution only, or your own account (OAuth)? | link only | phase 3 |
 | Q7 | Phone-as-server: embedded server, Termux, or only player + mixer on the phone? | player + mixer only | phase 7 |

@@ -1,0 +1,2 @@
+# Mus-Eq's own station list. Format: Name|Category|URL  (the Tray-FM list sits next to this file)
+Omarchy Radio|Music|https://radio.cliamp.stream/omarchy/stream
