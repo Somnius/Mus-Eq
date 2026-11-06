@@ -148,8 +148,8 @@ function connectEvents() {
       return;
     }
     switch (msg.action) {
-      case "play": webamp.play(); break;
-      case "pause": webamp.pause(); break;
+      case "play": webampPlay(); break;
+      case "pause": webampPause(); break;
       case "next": webamp.nextTrack(); break;
       case "previous": webamp.previousTrack(); break;
       case "volume": if (typeof msg.volume === "number") webamp.setVolume(Math.round(msg.volume * 100)); break;
@@ -173,9 +173,14 @@ function reportStation() {
   void api.report({ client_id: clientId, state, station_id: currentStation.id });
 }
 
+// Webamp's pause()/play() press the player's buttons: pause toggles and play restarts, so only
+// press them when the state says it matters.
+function webampPause() { if (webamp?.getMediaStatus() === "PLAYING") webamp.pause(); }
+function webampPlay() { if (webamp && webamp.getMediaStatus() !== "PLAYING") webamp.play(); }
+
 function playStation(s: Station) {
   const a = stAudio();
-  webamp?.pause();
+  webampPause();
   currentStation = s;
   a.src = s.url;
   $("st-status").textContent = `Connecting to ${s.name}…`;
