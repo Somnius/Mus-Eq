@@ -1,2 +1,4 @@
 .env
 target/
+web/node_modules/
+web/dist/

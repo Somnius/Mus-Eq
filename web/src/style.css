@@ -1,0 +1,20 @@
+:root { color-scheme: dark light; --bg:#14161a; --fg:#e6e6e6; --muted:#9aa0a6; --line:#2a2e35; --accent:#4caf50; }
+@media (prefers-color-scheme: light) { :root { --bg:#f6f6f4; --fg:#1b1b1b; --muted:#5b6066; --line:#d8d8d4; --accent:#2e7d32; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.4 system-ui, sans-serif; }
+h1 { font-size:1.2rem; margin:0; }
+#login { min-height:100vh; display:grid; place-items:center; }
+#login-form { display:grid; gap:.75rem; width:min(22rem, 90vw); }
+input, button { font:inherit; padding:.5rem .75rem; border:1px solid var(--line); border-radius:.4rem; background:transparent; color:inherit; }
+button { cursor:pointer; } button:hover { border-color:var(--accent); }
+#library { max-width:48rem; margin:0 auto; padding:1rem; }
+#library header { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+#library header h1 { margin-right:auto; }
+#search { flex:1 1 14rem; }
+#tracks, #skin-list { list-style:none; padding:0; margin:1rem 0; }
+#tracks li { display:flex; gap:.5rem; align-items:center; padding:.4rem 0; border-bottom:1px solid var(--line); }
+#tracks .meta { flex:1; min-width:0; } #tracks .title { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#tracks .sub, #status { color:var(--muted); font-size:.85rem; }
+#login-error { color:#e57373; min-height:1.2em; margin:0; }
+#webamp { position:fixed; inset:0; pointer-events:none; } #webamp > * { pointer-events:auto; }
+@media (max-width:600px) { #library { padding:.5rem; } }

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mus-Eq</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <div id="login" hidden>
+    <form id="login-form">
+      <h1>Mus-Eq</h1>
+      <input id="token" type="password" placeholder="Owner token" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+      <p id="login-error" role="alert"></p>
+    </form>
+  </div>
+  <main id="app" hidden>
+    <section id="library">
+      <header>
+        <h1>Mus-Eq</h1>
+        <input id="search" type="search" placeholder="Search title, artist, album">
+        <button id="scan" type="button">Rescan library</button>
+        <button id="logout" type="button">Sign out</button>
+      </header>
+      <p id="status" role="status"></p>
+      <ul id="tracks"></ul>
+      <details id="skins">
+        <summary>Skins</summary>
+        <ul id="skin-list"></ul>
+        <label>Upload a .wsz skin <input id="skin-file" type="file" accept=".wsz,.zip"></label>
+      </details>
+    </section>
+    <div id="webamp"></div>
+  </main>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
