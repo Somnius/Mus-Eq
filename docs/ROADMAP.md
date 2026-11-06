@@ -1,56 +1,79 @@
-# Roadmap (updated at the end of every phase)
+# Roadmap
 
-Status: `todo` / `doing` / `done`. Exit criteria are the definition of done. Estimates are rough.
-Last updated: 2026-11-06 (planning only, no code).
+Status and exit checks only; behavior is in `SPEC.md`, choices in `DECISIONS.md`. Tick a box only when it is verified. Estimates are rough. Last updated: 2026-11-07.
 
 | Phase | Name | Status |
 |---|---|---|
-| 0 | Decisions, specs, scaffold | doing (exit met; skin spec, Q3 and repo reminder left) |
-| 1 | Library on LAN + web player (+ cliamp, Omarchy widget) | todo |
-| 2 | Stations (external radio, Greek list) | todo |
-| 3 | Metadata, duplicates, fetch bot, playlist extension | todo |
-| 4 | Native clients + offline (Android, desktop) + skins | todo |
+| 0 | Decisions, specs, scaffold | done |
+| 1a | Server core: config, token, SQLite, scan, tracks, range audio | next |
+| 1b | Web client (Webamp), session + WebSocket | todo |
+| 2 | Stations (external list, passthrough) | todo |
+| 3 | Metadata, duplicates, fetch, playlist extension | todo |
+| 4 | Native clients + offline (Android, desktop) | todo |
 | 5 | Library radio + transcoding | todo |
 | 6 | Live phone radio (mic, ducking, mixer) | todo |
 | 7 | Polish: phone-as-server, on-device dedupe, more skins | todo |
 
-## Phase 0: decisions, specs, scaffold (~1 week)
-- [x] Answer Q1-Q4 (`docs/OPEN_QUESTIONS.md`): Q1 Rust, Q4 Tray-FM list. Q3 (Omarchy radio) still open, only blocks phase 2
-- [x] `docs/openapi.yaml` (v1 draft, lints clean with 19 style warnings) + `docs/SPEC-api.md`
-- [ ] `docs/SPEC-skin.md`
-- [x] Repo layout (cargo workspace `crates/museq-server`), `Containerfile`, `compose.yaml`
-- [x] CI workflow written (`.github/workflows/ci.yml`), untested: no remote yet
-- [x] Initial commit
-- [ ] Remind Lef to create the GitHub repo `Mus-Eq` + README and push
-Exit: `docker/podman run museq-server` answers `/v1/health`; OpenAPI validates. **Met 2026-11-06** with Docker (image 119 MB; curl from the host returned 200 `{"status":"ok","version":"0.1.0"}`; redocly 2.76.0 lint valid). Podman not tested (not installed).
+## Phase 0: decisions, specs, scaffold (done 2026-11-06/07)
+Rust workspace, `/v1/health`, `docs/openapi.yaml` (lint valid), Containerfile + compose, CI workflow, public repo, `v0.1.0`.
+Exit met: container answers `/v1/health` from the host (Docker; Podman untested); OpenAPI lint valid; CI green on GitHub.
 
-## Phase 1: library on LAN + web player (~3-4 weeks)
-Scan folder, SQLite, search, playlist CRUD, range streaming, Webamp web client with default classic skin + `.wsz` upload, cliamp pointed at the server, Omarchy now-playing widget, Compose file.
-Exit: Lef plays a local album in the browser and from another machine over LAN/Tailscale; container restart keeps the catalog.
+## Phase 1a: server core (~2 weeks) — next
+- [ ] Config (library path, token, bind, fetch flag) from env/file; bearer auth on everything except `/v1/health`
+- [ ] SQLite schema + migrations; `job` table with `kind=scan`
+- [ ] Scanner: walk a folder, sha256, read tags/duration with symphonia (fixtures include an Opus file: duration from the last Ogg page granule)
+- [ ] `GET /v1/tracks?q=`, `GET /v1/tracks/{id}`, `GET /v1/audio/{file_id}` with Range
+- [ ] Playlist CRUD (create, add, remove, reorder)
+- [ ] Tests (unit + an HTTP test against the router), CI green
+Image adds: nothing (server binary only).
+Exit: with `curl` and a token, scan a folder of mixed files, search, and stream a file with Range from another machine on the LAN/Tailscale; restart keeps the catalog.
 
-## Phase 2: stations (~1-2 weeks)
-Station table, the Omarchy radio (Q3), Greek list (Q4), error shown for dead URLs without killing the process.
-Exit: browser and cliamp play the station through MusEq.
+## Phase 1b: web client + session (~2 weeks)
+- [ ] `docs/SPEC-skin.md` (write first)
+- [ ] Vite + TypeScript client with Webamp, default classic skin, `.wsz` upload
+- [ ] `GET/POST /v1/session` and `/v1/events` (WebSocket); one global session
+- [ ] Omarchy now-playing widget reads the session API (read-only token)
+Exit: play a local album in the browser from another machine; the widget shows now-playing.
+
+## Phase 2: stations (~1 week)
+- [ ] Station table seeded from `data/stations/trayfm-stations.txt`; add `data/` to the image
+- [ ] Liveness check job for the stream URLs; dead ones flagged, not deleted
+- [ ] `GET /v1/stations` returns the upstream URL; the client plays it directly (no proxying)
+- [ ] The Omarchy radio (Q3)
+Exit: browser plays a station from the list; a dead URL shows an error and nothing crashes.
 
 ## Phase 3: metadata, duplicates, fetch, extension (~4-6 weeks)
-Tags from MusicBrainz/Discogs (accept before write), `fpcalc` duplicate groups with a keep-best proposal (never auto-delete), AcoustID identify-by-audio (look at free-API reality here), fetch jobs for singles and playlists behind the flag, playlist extension (local pool, same genre, new artists only).
-Exit: a mistagged file shows a candidate and changes only on accept; two copies of one rip collapse to one preferred file (a known pair is the fixture); a short playlist grows by N tracks with no repeated artist; fetch fails cleanly with the flag off.
+Jobs retry with backoff and keep partial results (`attempts`).
+- [ ] Tag candidates from MusicBrainz/Discogs, stored and applied only on accept
+- [ ] `fpcalc` duplicate groups with a keep-best proposal, never auto-delete
+- [ ] AcoustID identify-by-audio (check the free-API reality first)
+- [ ] Fetch jobs for singles and playlists behind the flag (owner has read the terms)
+- [ ] Playlist extension: same genre, new artists only, local pool first
+Image adds: `fpcalc`, pinned `yt-dlp`.
+Exit: a mistagged file shows a candidate and changes only on accept; a known duplicate pair collapses to one preferred file; a short playlist grows by N tracks with no repeated artist; fetch fails cleanly with the flag off.
 
 ## Phase 4: native clients + offline (~4-6 weeks)
-Android (Media3, foreground service, offline pins, lock-screen controls), Linux/Windows native (cliamp plugin first, Qt Quick later), skin parity test.
-Exit: Android plays offline with the screen off for 1 h; Windows runs the same `.wsz` as the web, or "classic everywhere" is dropped and written down.
+- [ ] Android: Media3, foreground service, offline pins, lock-screen controls
+- [ ] Desktop shell decision (Q13); optional cliamp provider
+- [ ] Skin parity golden-image test
+- [ ] Packaging checklist: AppImage/NSIS + SHA-256, smoke test on a clean archive, short Windows target dir, pinned tool downloads
+Exit: Android plays offline with the screen off for 1 h; the same `.wsz` renders on web and the chosen desktop shell, or "classic everywhere" is dropped and written down.
 
 ## Phase 5: library radio + transcoding (~2-3 weeks)
-Library stations with rotation rules, codec presets (Opus/Ogg, MP3, AAC), Icecast-compatible output, embed snippet, tokens for other apps.
-Exit: a station runs 24 h under 1 CPU core; VLC, browser and the widget play it.
+- [ ] Measured test: in-process Opus vs ffmpeg for one station on one core; record the decision
+- [ ] Library stations with rotation rules, codec presets (Opus/Ogg, MP3, AAC), Icecast-compatible output
+- [ ] `codec`/`kbps` on `/v1/audio/{file_id}`
+Image adds: `ffmpeg`.
+Exit: a station runs 24 h under 1 CPU core; VLC, the browser and the widget play it.
 
 ## Phase 6: live phone radio (~3-4 weeks)
-Mic capture, ducking, 2-channel mixer, uplink (HTTP Ogg/Opus first), server re-broadcast. Real handset test.
-Exit: music drops while Lef speaks and returns after; a web listener hears the mix within ~5 s.
+- [ ] Mic capture, ducking, 2-channel mixer on the phone; uplink Ogg/Opus over HTTP
+- [ ] Server decodes the uplink in-process (libopus) and re-broadcasts
+Exit: real handset: music drops while the owner speaks and returns after; a web listener hears the mix within ~5 s.
 
 ## Phase 7: polish (ongoing)
 Phone-as-server (Q7), on-device dedupe (Q8), second skins.
 
 ## Phase log
-- 2026-11-06 phase 0 exit criteria met; Rust chosen over Go; Greek station seed added.
-(one line per finished phase)
+- 2026-11-06 Phase 0 scaffold, Rust chosen, Greek station seed added.
+- 2026-11-07 Public repo + `v0.1.0`; docs refactored (SPEC-api folded into SPEC, DECISIONS added); phase 1 split into 1a/1b.

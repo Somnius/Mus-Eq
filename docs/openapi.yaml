@@ -74,13 +74,16 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Track" }
         "404": { $ref: "#/components/responses/NotFound" }
-  /v1/audio/{id}:
+  /v1/audio/{file_id}:
     get:
       tags: [library]
       operationId: getAudio
-      summary: Stream a file (supports HTTP Range). Optional on-the-fly transcode.
+      summary: Stream a file by file id (supports HTTP Range). codec/kbps are not implemented before phase 5 (501).
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - name: file_id
+          in: path
+          required: true
+          schema: { type: string }
         - name: codec
           in: query
           schema: { type: string, enum: [opus, mp3, aac] }
@@ -95,6 +98,11 @@ paths:
               schema: { type: string, format: binary }
         "206":
           description: Partial content
+        "501":
+          description: codec/kbps requested before transcoding exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
   /v1/playlists:
     get:
@@ -191,7 +199,7 @@ paths:
     get:
       tags: [stations]
       operationId: listStations
-      summary: List stations (external, library, live)
+      summary: List stations. External stations carry the upstream url and are played by the client directly, never proxied.
       responses:
         "200":
           description: Stations
@@ -204,7 +212,7 @@ paths:
     get:
       tags: [stations]
       operationId: getRadioStream
-      summary: Icecast-style chunked stream of a library or live station
+      summary: Icecast-style chunked stream of a library or live station (never external)
       parameters:
         - $ref: "#/components/parameters/Id"
         - name: ext
@@ -230,7 +238,7 @@ paths:
               type: object
               required: [kind]
               properties:
-                kind: { type: string, enum: [fetch, tag, fingerprint] }
+                kind: { type: string, enum: [scan, fetch, tag, fingerprint] }
                 input: { type: object, additionalProperties: true }
       responses:
         "202":
@@ -362,7 +370,7 @@ components:
       required: [id, kind, state]
       properties:
         id: { type: string }
-        kind: { type: string, enum: [fetch, tag, fingerprint] }
+        kind: { type: string, enum: [scan, fetch, tag, fingerprint] }
         state: { type: string, enum: [queued, running, done, failed] }
         error: { type: string }
         result_track_id: { type: string }
