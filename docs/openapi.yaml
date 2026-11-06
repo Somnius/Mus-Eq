@@ -1,0 +1,374 @@
+openapi: 3.1.0
+info:
+  title: MusEq API
+  version: 0.1.0
+  description: >-
+    Draft v1 contract for the MusEq server. Contract first: clients are built
+    against this file. Only /v1/health is implemented so far.
+servers:
+  - url: http://127.0.0.1:8080
+security:
+  - bearer: []
+tags:
+  - name: system
+  - name: library
+  - name: playlists
+  - name: session
+  - name: stations
+  - name: jobs
+  - name: skins
+paths:
+  /v1/health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: Server is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /v1/tracks:
+    get:
+      tags: [library]
+      operationId: searchTracks
+      summary: Search the library
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Matching tracks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Track" }
+                  total: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/tracks/{id}:
+    get:
+      tags: [library]
+      operationId: getTrack
+      summary: One track
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The track
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Track" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/audio/{id}:
+    get:
+      tags: [library]
+      operationId: getAudio
+      summary: Stream a file (supports HTTP Range). Optional on-the-fly transcode.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: codec
+          in: query
+          schema: { type: string, enum: [opus, mp3, aac] }
+        - name: kbps
+          in: query
+          schema: { type: integer, minimum: 32, maximum: 320 }
+      responses:
+        "200":
+          description: Audio bytes
+          content:
+            audio/*:
+              schema: { type: string, format: binary }
+        "206":
+          description: Partial content
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/playlists:
+    get:
+      tags: [playlists]
+      operationId: listPlaylists
+      summary: List playlists
+      responses:
+        "200":
+          description: Playlists
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Playlist" }
+    post:
+      tags: [playlists]
+      operationId: createPlaylist
+      summary: Create a playlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                extend: { type: boolean, default: false }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Playlist" }
+  /v1/playlists/{id}/items:
+    post:
+      tags: [playlists]
+      operationId: addPlaylistItem
+      summary: Append a track
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [track_id]
+              properties:
+                track_id: { type: string }
+      responses:
+        "204": { description: Added }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/session:
+    get:
+      tags: [session]
+      operationId: getSession
+      summary: Now-playing state (what widgets and other apps read)
+      responses:
+        "200":
+          description: Current session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+    post:
+      tags: [session]
+      operationId: controlSession
+      summary: Control playback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [play, pause, next, previous, volume] }
+                track_id: { type: string }
+                volume: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        "200":
+          description: New session state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+  /v1/events:
+    get:
+      tags: [session]
+      operationId: events
+      summary: WebSocket upgrade for server events (session changes, job progress)
+      responses:
+        "101": { description: Switching protocols }
+  /v1/stations:
+    get:
+      tags: [stations]
+      operationId: listStations
+      summary: List stations (external, library, live)
+      responses:
+        "200":
+          description: Stations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Station" }
+  /v1/radio/{id}.{ext}:
+    get:
+      tags: [stations]
+      operationId: getRadioStream
+      summary: Icecast-style chunked stream of a library or live station
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: ext
+          in: path
+          required: true
+          schema: { type: string, enum: [ogg, mp3, aac] }
+      responses:
+        "200":
+          description: Endless audio stream
+          content:
+            audio/*:
+              schema: { type: string, format: binary }
+  /v1/jobs:
+    post:
+      tags: [jobs]
+      operationId: createJob
+      summary: Start a background job (fetch is refused unless enabled in config)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [fetch, tag, fingerprint] }
+                input: { type: object, additionalProperties: true }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "403":
+          description: Job kind disabled by configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/jobs/{id}:
+    get:
+      tags: [jobs]
+      operationId: getJob
+      summary: Job state
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The job
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/skins:
+    get:
+      tags: [skins]
+      operationId: listSkins
+      summary: List uploaded .wsz skins
+      responses:
+        "200":
+          description: Skins
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Skin" }
+    post:
+      tags: [skins]
+      operationId: uploadSkin
+      summary: Upload a .wsz skin
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Skin" }
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Unauthorized:
+      description: Missing or invalid token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: No such object
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Health:
+      type: object
+      required: [status, version]
+      properties:
+        status: { type: string, enum: [ok] }
+        version: { type: string }
+    Track:
+      type: object
+      required: [id, title]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        artist: { type: string }
+        album: { type: string }
+        duration_ms: { type: integer }
+        preferred_file_id: { type: string }
+    Playlist:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        extend: { type: boolean }
+        track_ids:
+          type: array
+          items: { type: string }
+    Session:
+      type: object
+      required: [state]
+      properties:
+        state: { type: string, enum: [stopped, playing, paused] }
+        track: { $ref: "#/components/schemas/Track" }
+        station_id: { type: string }
+        position_ms: { type: integer }
+        volume: { type: number }
+    Station:
+      type: object
+      required: [id, name, kind]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [external, library, live] }
+        category: { type: string }
+        url: { type: string, format: uri }
+    Job:
+      type: object
+      required: [id, kind, state]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [fetch, tag, fingerprint] }
+        state: { type: string, enum: [queued, running, done, failed] }
+        error: { type: string }
+        result_track_id: { type: string }
+    Skin:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }

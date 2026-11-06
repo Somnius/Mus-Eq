@@ -1,0 +1,10 @@
+services:
+  museq:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: museq-server
+    ports:
+      - "127.0.0.1:8080:8080"   # localhost only; change deliberately to expose on LAN/Tailscale
+    cpus: 4
+    restart: unless-stopped

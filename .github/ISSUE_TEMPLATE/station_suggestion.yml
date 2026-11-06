@@ -1,0 +1,38 @@
+name: Radio station suggestion
+description: Add, fix or remove a radio station
+labels: [stations]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Station name
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: Stream URL
+      description: A direct stream, not the station's web page.
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options: [Music, News, Sports, Other]
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is this about
+      options: [New station, Dead or broken stream, Wrong category or name]
+    validations:
+      required: true
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Checks
+      options:
+        - label: I checked that the stream plays
+          required: true

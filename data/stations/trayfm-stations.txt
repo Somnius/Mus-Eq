@@ -1,0 +1,129 @@
+# TrayFM Stations Database v1.0
+094.00 ~ Επικοινωνία|News|https://radio.streamings.gr/proxy/epikoinwnia94fm?mp=/stream
+9.58 ΕΡΤ3 95.8|News|http://radiostreaming.ert.gr:80/ert-958fm
+Athens Voice 102.5|News|https://nitro.live24.gr/nitro4555
+FM 100 Δημοτικό Ραδιόφωνο Θεσσαλονίκης|News|https://live.fm100.gr/shoutcast/fm100
+FM 100.6 Δημοτικό Ραδιόφωνο Θεσσαλονίκης|News|https://live.fm100.gr/shoutcast/fm1006
+Real FM 97.8|News|https://realfm.live24.gr/realfm
+ΕΡΑ ~ Voice of Greece|News|http://radiostreaming.ert.gr/ert-voiceofgreece
+ΕΡΤ Δεύτερο πρόγραμμα 103.7|News|http://radiostreaming.ert.gr:80/ert-deftero
+ΕΡΤ Πρώτο πρόγραμμα 91.6|News|http://radiostreaming.ert.gr:80/ert-proto
+ΕΡΤ3|News|http://radiostreaming.ert.gr:80/ert-102fm
+Κανάλι 1 – Δημοτική Ραδιοφωνία Πειραιά 90.4|News|https://netradio.live24.gr/kanali1peiraia
+Κοινωνικό Ραδιόφωνο Χανίων KPaX Radio|News|https://c32.radioboss.fm:18563/stream
+Παραπολιτικά FM 90.1|News|https://netradio.live24.gr/athinaradio
+Πρακτορείο 104.9|News|http://s3.onweb.gr:8436
+Ράδιο Άποψη|News|http://eco.onestreaming.com:8398/;
+Ράδιο Θεσσαλονίκη 94.5|News|http://eu7.fastcast4u.com:6156/stream?type=http&nocache=136596
+Ραδιόφωνο 904 90.4|News|http://icecast.902.gr:8000/904
+ΣΚΑΪ 100.3|News|https://skai.live24.gr/skai1003-2
+094.30 ~ Ελλάδα Sports|Sports|https://stream.ellada943.gr:10198/radio.mp3
+Sport FM 94.6|Sports|https://sportfm.live24.gr/sportfm7712
+ΕΡΑ Σπορ 101.8|Sports|http://radiostreaming.ert.gr:80/ert-erasport
+088.00 ~ Μέντα|Music|https://stream.radiojar.com/menta.aac
+088.60 ~ Kids Radio|Music|https://stream.radiojar.com/64p6ktzntg0uv
+088.90 ~ Hit|Music|https://stream.radiojar.com/wgv51425e3quv
+089.20 ~ Music|Music|https://netradio.live24.gr/music892
+089.80 ~ Δρόμος|Music|https://n01a-eu.rcs.revma.com/10q3enqxbfhvv
+090.60 ~ ΑΡΤ|Music|https://radio.streamings.gr/proxy/beradio?mp=/be.aac
+091.40 ~ Λύρα|Music|https://i4.streams.ovh/ic/lyrafm/stream
+092.30 ~ Λάμψη|Music|http://lampsifmlive.mdc.akamaized.net/strmLampsi/userLampsi/playlist.m3u8
+093.40 ~ Παλμός|Music|http://s6.onweb.gr:8010/;stream
+094.90 ~ Ρυθμός|Music|https://stream.radiojar.com/g4tyehk5yvduv
+096.00 ~ Styl FM|Music|https://sh.onweb.gr:7064/;
+096.30 ~ Red|Music|https://stream.radiojar.com/redfm963
+096.60 ~ Pepper|Music|https://stream.radiojar.com/pepper.m4a
+096.90 ~ Rock FM|Music|https://az10.yesstreaming.net:8060/radio.mp3
+097.20 ~ Easy|Music|https://stream.radiojar.com/cthtwxk5yvduv
+098.60 ~ Pride 🌈|Music|https://politismedia-sec.live24.gr/streameepride
+099.20 ~ Μελωδία|Music|https://stream.radiojar.com/8du64725e3quv
+099.50 ~ Πειρατικός|Music|http://89.163.217.252:9800
+101.30 ~ Δίεση|Music|https://n05a-eu.rcs.revma.com/gkfwrhqxbfhvv
+101.60 ~ Radio Paradise|Music|https://rdst.win:48850/
+104.60 ~ My Radio|Music|https://streaming.myradio1046.fm/myradio1046
+105.20 ~ Rebel|Music|https://netradio.live24.gr/rebel1052
+1055 Rock 105.5|Music|http://radio.1055rock.gr:30000/1055
+106.40 ~ Ράδιο Αργοσαρωνικός|Music|http://s3.onweb.gr:8536
+106.50 ~ Athens Radio|Music|http://89.163.217.252:9400/stream
+106.70 ~ ΕΡΑ Zeppelin (Πάρνηθα)|Music|http://radiostreaming.ert.gr/ert-zeppelin
+107.20 ~ Blue Space|Music|https://sp1.19cloudsnetwork.gr/8008/stream
+88μισό 88.5|Music|http://solid33.streamupsolutions.com:30000/stream
+99FM/ράδιο1|Music|http://62.212.82.208:8000/stream
+A 100 FM 107.4|Music|http://bestgreek.info:8104
+Alpha 98.9|Music|http://ample.radiojar.com/xcdg6yggzfeuv
+Athens DJ 95.2|Music|https://netradio.live24.gr/athensdeejay
+Athens Free Radio|Music|http://n08.radiojar.com/e206r95qsp8uv
+Athens Up - Athens Up|Music|https://n02.radiojar.com/9ndpdg3c0s8uv
+Bar Legend Radio|Music|https://solid24.streamupsolutions.com:2199/tunein/nilxzqeg.pls
+Best Radio 92.6|Music|https://best.live24.gr/best1222
+Ble.FM 93.1|Music|http://radio.lancom.gr:8006/stream1
+Cosmoradio 95.1|Music|http://cosmoradio.gr:80/stream1
+D-Code 962.gr|Music|http://s15.myradiostream.com:13980/;listen.pls
+Derti Radio|Music|http://derti.live24.gr:80/derty1000
+Easy 97.2|Music|https://easy972.live24.gr/easy972
+En Lefko Athens|Music|http://stream.radiojar.com:80/enlefko877
+F Radio GR - F Radio GR|Music|https://stream-175.zeno.fm/78pga7pvwk8uv
+Fly 104|Music|https://eu9.fastcast4u.com/proxy/nicper00?mp=/1
+Focus FM 103.6|Music|http://focus.greekstream.net:80/
+Fresh Salad 96.1|Music|http://178.33.135.246:5262/stream
+Galaxy 92|Music|https://galaxy.live24.gr/galaxy9292
+Happy Radio FM 104|Music|https://ath10400fm.live24.gr/ath10400fm
+Heat Radio|Music|https://solid67.streamupsolutions.com/proxy/qrynsxmv
+Hot FM|Music|https://hotfm.live24.gr/hotfm
+Imagine 89.7|Music|https://imagine897.radioca.st/stream
+Kiss Extra FM Patra|Music|http://stream.kiisextra.gr:48500/kiis.mp3
+Kiss FM 92.9|Music|https://kissfm.live24.gr/kissfmathens
+Kiss FM Athens|Music|https://kissfm.live24.gr/kiss2111
+Libero 107.4|Music|http://eco.onestreaming.com:8081/
+Liquid FM|Music|http://ice.streamcloud.mediacdn.com:80/freeradio-1000
+Love 106.5|Music|http://server.insms.gr:45104/;stream
+Love Radio 97.5|Music|https://loveradio.live24.gr/loveradio-1000
+MAD Radio 106.2|Music|http://mediaserver.mad.tv:80/stream
+Magico Radio|Music|https://i4.streams.ovh:2199/tunein/trellas-stream.pls
+melodia.au ~ Μελωδία Αδελαΐδας|Music|https://s18.myradiostream.com:4476
+melodia.au ~ Μελωδία Αδελαΐδας (Ρεμπέτικα)|Music|http://203.213.16.149:820
+Melody Patra|Music|http://stream.melody888.gr:48500/melody.mp3
+Metro 89.2 Heraklion|Music|https://stream.crete.ovh:8443/metro
+Metropolis 95.5|Music|https://metropolis.live24.gr/metropolis955thess
+More 103|Music|http://eco.onestreaming.com:8041
+North 98|Music|https://netradio.live24.gr/north98thess
+Nostos 100.6|Music|https://neos.win:37878/stream
+Plus Radio 102.6|Music|http://plusradio.gr/stream1
+Point Radio Pop|Music|http://radio.streamings.gr:8029/stream2
+Radio Galaxy 99|Music|http://solid1.streamupsolutions.com:11074/stream
+Radio Gold @net|Music|http://radiogold.live24.gr:80/radiogold
+Radio Hot Lips Athens|Music|https://netradio.live24.gr/radiohotlips
+Radio Roben|Music|http://radio.streamings.gr:8029/stream
+Red FM 96.3|Music|https://stream.rcs.revma.com/e4d84zez1duvv
+Republic Radio|Music|https://netradio.live24.gr/republicthess
+RSO 91.7|Music|http://tachyon.shoutca.st:8594
+Rythmos στούς 94.9|Music|http://rythmos.live24.gr:80/rythmos
+Sfera 102.2|Music|https://sfera.live24.gr/sfera4132
+Sohos FM 88.7|Music|http://eu7.fastcast4u.com:2046/stream
+Studio 3 103.5|Music|http://s1.onweb.gr:8408
+Styl FM 104.9|Music|http://s3.onweb.gr:8530/;
+Velvet 96.8|Music|https://netradio.live24.gr/velvet968thess
+Venus Amaliada Alt.|Music|http://s3.onweb.gr:8808
+Zoo Radio 90.8|Music|https://netradio.live24.gr/zoo908thess
+Αθήνα 98.4|Music|https://athina984.live24.gr/athina984
+Ελληνικός FM 93.2|Music|https://orange.live24.gr/orange9320
+ΕΡΑ ~ Kosmos Jazz|Music|https://radiostreaming.ert.gr/ert-webjazz
+ΕΡΑ ~ Τα λαϊκά|Music|https://radiostreaming.ert.gr/ert-talaika
+ΕΡΤ Κόσμος 93.6|Music|http://radiostreaming.ert.gr:80/ert-kosmos
+ΕΡΤ Τρίτο πρόγραμμα 90.9|Music|http://radiostreaming.ert.gr:80/ert-trito
+Ερωτικός FM 94.8|Music|http://eu9.fastcast4u.com:5282/;
+Κρήτη FM 87.5|Music|http://s3.onweb.gr:8878
+Λαϊκός FM 87.6|Music|https://netradio.live24.gr/laikos876
+Μάχη FM 99.8|Music|https://maxhfm.streams.gr/ic/maxhfm/stream
+Ματζόρε Πανεπιστημίου Κρήτης (Ρέθυμνο) 89.1 FM|Music|https://rs.radio.uoc.gr:8001/matzore_64.ogg
+Μινόρε FM|Music|https://minorefm.live24.gr/minorefm
+Μουσικός 98.6|Music|https://netradio.live24.gr/mousikos986
+Μύθος FM 93.4|Music|http://s2.free-shoutcast.com:18560/stream
+Πανεπιστημίου Κρήτης (Ηράκλειο) RastaPank 96.7 FM|Music|https://rs.radio.uoc.gr:8001/uoc_128.ogg
+Πανόραμα 98.4|Music|https://netradio.live24.gr/panorama984
+Ράδιο Ακρίτες 102.3|Music|http://akritespontou.live24.gr:80/akritespontou
+Ραδιοκύματα 104.4|Music|http://s1.onweb.gr:8812/
+Στο κόκκινο 105.5|Music|http://stream.radiojar.com:80/kokkino-ath.mp3
+Στο Μωβ|Music|http://stream.radiojar.com:80/kk01hepkb.mp3
+Τρανζίστορ 100.3|Music|https://netradio.live24.gr/tranzistor1003thess
+Χρώμα FM 105.8|Music|https://hroma1058thess.live24.gr/hroma1058thess
