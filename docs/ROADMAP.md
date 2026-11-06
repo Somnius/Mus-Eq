@@ -7,7 +7,7 @@ Status and exit checks only; behavior is in `SPEC.md`, choices in `DECISIONS.md`
 | 0 | Decisions, specs, scaffold | done |
 | 1a | Server core: config, token, SQLite, scan, tracks, range audio | done |
 | 1b | Web client (Webamp), session + WebSocket | done (pushed, CI green) |
-| 2 | Stations (external list, passthrough) | built, awaiting gate |
+| 2 | Stations (external list, passthrough) | done (pushed, CI green) |
 | 3 | Metadata, duplicates, fetch, playlist extension | todo |
 | 4 | Native clients + offline (Android, desktop) | todo |
 | 5 | Library radio + transcoding | todo |
@@ -51,7 +51,7 @@ Review: two independent reviews found no auth bypass, traversal or SQL injection
 Image adds: the built web client (node build stage).
 Exit: play a local album in the browser from another machine; the widget shows now-playing. Checked on localhost only; the other-machine check is still the owner's to try.
 
-## Phase 2: stations (built 2026-11-07, waiting for the review gate)
+## Phase 2: stations (done 2026-11-07; reviewed, green light given, pushed, CI green)
 - [x] Station table (migration v4), idempotent seed import from `data/stations/` (128 Tray-FM stations plus Mus-Eq's own list, Omarchy Radio first), several seed lists via `MUSEQ_STATIONS_SEED`
 - [x] `GET/POST /v1/stations`, `GET/DELETE /v1/stations/{id}`: accent-insensitive Greek search, category and live filters, http(s)-only URL validation
 - [x] Liveness check as a job (`check_stations`, 8 at a time, one 10 s deadline per stream, redirects followed by hand and every hop checked, handles old Shoutcast "ICY 200" replies, audio sniffing when the content type is missing, records why a stream failed; a dead URL never crashes anything).
@@ -60,9 +60,9 @@ Exit: play a local album in the browser from another machine; the widget shows n
 - [x] Session can report a station; remote commands: `play` with `station_id` or `track_id` starts it in the player, pause/volume reach the station
 - [x] The Omarchy radio (Q3): `https://radio.cliamp.stream/omarchy/stream`
 - [x] Tests: 31 Rust tests (stations with fake radio servers incl. ICY, HTML, 404, refused, redirect, no-content-type sniffing; private-address refusal; session; migration) plus the headless-browser smoke test with a fake radio station (plays in the browser, session reports it, remote pause and remote play-station work)
-- [x] CI now has an `e2e` job that runs `scripts/check.sh` (browser smoke test included). Written, **untested until the next push** (it relies on the Chrome on the GitHub runner)
+- [x] CI now has an `e2e` job that runs `scripts/check.sh` (browser smoke test included). Verified on GitHub after the push: all four jobs (rust, web, openapi, e2e) passed
 - [ ] Not tested: a real station played in a real browser from this code (only the fake station); liveness checks over IPv6; the upstream list's quality (26 of 128 were down today)
-- [ ] Phase gate: independent test run, two reviews, owner's green light
+- [x] Phase gate: independent test run (31 Rust tests + 17 browser checks), two reviews, owner's green light
 Image adds: `data/stations/` (the seed lists).
 Exit: the browser plays a station from the list through the plain audio element; a dead URL shows an error and nothing crashes. Met on the fake station and on the live check.
 
@@ -103,6 +103,7 @@ Phone-as-server (Q7), on-device dedupe (Q8), second skins.
 
 ## Phase log
 - 2026-11-06 Phase 0 scaffold, Rust chosen, Greek station seed added.
+- 2026-11-07 Phase 2 (stations) reviewed by two reviewers, fixed (private-address refusal, redirect checks, audio sniffing), pushed; CI green incl. the browser test.
 - 2026-11-07 Phase 1 (1a+1b) reviewed by two reviewers, fixed, pushed; CI (rust incl. tests, web, openapi) green.
 - 2026-11-07 Phase 1b built: cookie login, session + WebSocket, skins, Webamp client, now-playing script (review pending).
 - 2026-11-07 Phase 1a built: scan, tracks, Range audio, playlists, token auth.
