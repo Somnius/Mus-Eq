@@ -137,7 +137,54 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Playlist" }
+  /v1/playlists/{id}:
+    get:
+      tags: [playlists]
+      operationId: getPlaylist
+      summary: One playlist with its ordered track ids
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The playlist
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Playlist" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [playlists]
+      operationId: deletePlaylist
+      summary: Delete a playlist
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/playlists/{id}/items:
+    put:
+      tags: [playlists]
+      operationId: setPlaylistItems
+      summary: Replace the whole item list (this is how clients remove and reorder)
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [track_ids]
+              properties:
+                track_ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: The playlist after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Playlist" }
+        "404": { $ref: "#/components/responses/NotFound" }
     post:
       tags: [playlists]
       operationId: addPlaylistItem
@@ -246,6 +293,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Job" }
+        "409":
+          description: A scan is already running
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403":
           description: Job kind disabled by configuration
           content:
@@ -372,6 +424,8 @@ components:
         id: { type: string }
         kind: { type: string, enum: [scan, fetch, tag, fingerprint] }
         state: { type: string, enum: [queued, running, done, failed] }
+        attempts: { type: integer }
+        result: { type: object, additionalProperties: true }
         error: { type: string }
         result_track_id: { type: string }
     Skin:

@@ -2,7 +2,7 @@
 
 A self-hosted music server and player. One headless server (Docker or Podman) that holds your library, fetches tracks, builds playlists, fixes tags, finds duplicates and streams radio. Thin clients talk to it over one API: a web player, and native players for Windows, Linux and Android. The first skin is the classic Winamp look.
 
-**Status: early scaffold.** Right now the server only answers `GET /v1/health`. The API is drafted in [`docs/openapi.yaml`](docs/openapi.yaml), the plan is in [`docs/ROADMAP.md`](docs/ROADMAP.md) and the design is in [`docs/SPEC.md`](docs/SPEC.md). Don't expect it to play music yet.
+**Status: early.** The server can scan a folder, search tracks, stream files with Range and manage playlists. There is no player UI yet. The full API is drafted in [`docs/openapi.yaml`](docs/openapi.yaml), the plan is in [`docs/ROADMAP.md`](docs/ROADMAP.md) and the design is in [`docs/SPEC.md`](docs/SPEC.md). 
 
 ## What it's meant to do
 
@@ -17,15 +17,21 @@ A self-hosted music server and player. One headless server (Docker or Podman) th
 
 ## Try what exists
 
+The server needs an owner token (at least 16 characters) and a folder of music. It scans the folder, serves tracks with Range support, and keeps playlists.
+
 ```bash
-docker build -f Containerfile -t museq-server .
-docker run --rm -p 127.0.0.1:8080:8080 museq-server
-curl http://127.0.0.1:8080/v1/health
+cp .env.example .env            # then edit the token (.env is git-ignored)
+mkdir -p music                  # put some audio files in here
+docker compose up --build
+
+export T=<your token>
+curl -XPOST -H "Authorization: Bearer $T" -H 'content-type: application/json' -d '{"kind":"scan"}' http://127.0.0.1:8080/v1/jobs
+curl -H "Authorization: Bearer $T" 'http://127.0.0.1:8080/v1/tracks?q=something'
 ```
 
-Or `docker compose up --build`. Podman should work with the same `Containerfile` but I haven't tested it.
+`GET /v1/health` is open. Everything else needs `Authorization: Bearer <token>`. The port is published on localhost only; change that in `compose.yaml` on purpose if you want LAN or Tailscale access. Podman should work with the same `Containerfile` but I haven't tested it.
 
-From source you need a recent Rust toolchain: `cargo run -p museq-server` (listens on `127.0.0.1:8080`, change it with `MUSEQ_BIND`).
+From source (recent Rust toolchain): `MUSEQ_TOKEN=... MUSEQ_LIBRARY=./music cargo run -p museq-server`. Settings: `MUSEQ_BIND` (default `127.0.0.1:8080`), `MUSEQ_LIBRARY`, `MUSEQ_DB`, `MUSEQ_TOKEN` or `MUSEQ_TOKEN_FILE`.
 
 ## Layout
 

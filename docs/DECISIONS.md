@@ -11,3 +11,6 @@
 - 2026-11-07 **Transcoding: ffmpeg in the image; in-process Opus is an option measured at the start of phase 5.**
 - 2026-11-07 **Phase 1 is split**: 1a server core (curl-checkable, CI green), 1b Webamp client and session, then phase 2.
 - 2026-11-07 **Desktop shell stays open (Q13)**, browser first; decided at phase 4.
+- 2026-11-07 **Phase 1a data shortcuts:** `artist`/`album` are text columns on `track`, one track per file, ids are SQLite integers exposed as strings, codec = file extension. Proper tables and fingerprints arrive with dedupe (phase 3).
+- 2026-11-07 **Playlist edits:** items are removed/reordered by replacing the whole list (`PUT /v1/playlists/{id}/items`).
+- 2026-11-07 **Server refuses to start without a token** (min 16 characters); it never prints it.

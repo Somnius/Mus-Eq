@@ -5,7 +5,7 @@ Status and exit checks only; behavior is in `SPEC.md`, choices in `DECISIONS.md`
 | Phase | Name | Status |
 |---|---|---|
 | 0 | Decisions, specs, scaffold | done |
-| 1a | Server core: config, token, SQLite, scan, tracks, range audio | next |
+| 1a | Server core: config, token, SQLite, scan, tracks, range audio | done (pending CI run) |
 | 1b | Web client (Webamp), session + WebSocket | todo |
 | 2 | Stations (external list, passthrough) | todo |
 | 3 | Metadata, duplicates, fetch, playlist extension | todo |
@@ -18,15 +18,16 @@ Status and exit checks only; behavior is in `SPEC.md`, choices in `DECISIONS.md`
 Rust workspace, `/v1/health`, `docs/openapi.yaml` (lint valid), Containerfile + compose, CI workflow, public repo, `v0.1.0`.
 Exit met: container answers `/v1/health` from the host (Docker; Podman untested); OpenAPI lint valid; CI green on GitHub.
 
-## Phase 1a: server core (~2 weeks) — next
-- [ ] Config (library path, token, bind, fetch flag) from env/file; bearer auth on everything except `/v1/health`
-- [ ] SQLite schema + migrations; `job` table with `kind=scan`
-- [ ] Scanner: walk a folder, sha256, read tags/duration with symphonia (fixtures include an Opus file: duration from the last Ogg page granule)
-- [ ] `GET /v1/tracks?q=`, `GET /v1/tracks/{id}`, `GET /v1/audio/{file_id}` with Range
-- [ ] Playlist CRUD (create, add, remove, reorder)
-- [ ] Tests (unit + an HTTP test against the router), CI green
-Image adds: nothing (server binary only).
-Exit: with `curl` and a token, scan a folder of mixed files, search, and stream a file with Range from another machine on the LAN/Tailscale; restart keeps the catalog.
+## Phase 1a: server core (done 2026-11-07)
+- [x] Config from env (library path, DB, token, bind); bearer auth on everything except `/v1/health`
+- [x] SQLite schema + `user_version` migration; one `job` table (`kind=scan`)
+- [x] Scanner: walk a folder, sha256, tags and duration via symphonia (mp3, flac and Opus fixtures; Opus duration comes out right); rescan skips unchanged files and drops vanished ones
+- [x] `GET /v1/tracks?q=`, `GET /v1/tracks/{id}`, `GET /v1/audio/{file_id}` with Range
+- [x] Playlist CRUD (create, list, get, delete, add item, replace items for remove/reorder)
+- [x] 6 integration tests, clippy clean; verified in Docker: 401 without token, scan, search, 206 Range, catalog survives a restart, token not in logs
+Image adds: nothing.
+Exit met: with `curl` and a token a mixed folder scans, searches and streams with Range, and a restart keeps the catalog. Not yet checked: from another machine on the LAN (only localhost was tried), CI on GitHub for this commit.
+Known gaps carried to later: artist/album are plain text columns (own tables when dedupe needs them); `<audio>` elements can't send an Authorization header, so phase 1b needs a cookie or a short-lived signed URL for audio; the DB mutex is held for short queries only, fine for one owner.
 
 ## Phase 1b: web client + session (~2 weeks)
 - [ ] `docs/SPEC-skin.md` (write first)
@@ -76,4 +77,5 @@ Phone-as-server (Q7), on-device dedupe (Q8), second skins.
 
 ## Phase log
 - 2026-11-06 Phase 0 scaffold, Rust chosen, Greek station seed added.
+- 2026-11-07 Phase 1a built: scan, tracks, Range audio, playlists, token auth.
 - 2026-11-07 Public repo + `v0.1.0`; docs refactored (SPEC-api folded into SPEC, DECISIONS added); phase 1 split into 1a/1b.

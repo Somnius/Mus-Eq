@@ -4,7 +4,15 @@ services:
       context: .
       dockerfile: Containerfile
     image: museq-server
+    environment:
+      # Required: at least 16 characters. Put it in a local .env file (git-ignored), see .env.example
+      MUSEQ_TOKEN: ${MUSEQ_TOKEN:?set MUSEQ_TOKEN in .env}
+    volumes:
+      - museq-data:/data
+      - ${MUSEQ_MUSIC_DIR:-./music}:/music:ro
     ports:
       - "127.0.0.1:8080:8080"   # localhost only; change deliberately to expose on LAN/Tailscale
     cpus: 4
     restart: unless-stopped
+volumes:
+  museq-data:

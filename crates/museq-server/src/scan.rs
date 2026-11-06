@@ -1,0 +1,236 @@
+use rusqlite::{Connection, OptionalExtension, params};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+use std::fs::File;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::UNIX_EPOCH;
+
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::TrackType;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::{MetadataOptions, StandardTag};
+
+const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "flac", "ogg", "oga", "opus", "m4a", "aac", "wav", "aif", "aiff",
+];
+
+#[derive(Debug, Default, Serialize, PartialEq)]
+pub struct ScanStats {
+    pub added: u32,
+    pub updated: u32,
+    pub unchanged: u32,
+    pub removed: u32,
+    pub errors: u32,
+}
+
+#[derive(Debug, Default)]
+pub struct Probed {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub duration_ms: Option<i64>,
+}
+
+fn is_audio(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| AUDIO_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<_> = rd.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let p = e.path();
+        // file_type() does not follow symlinks, so a link can't send the scan outside the library
+        match e.file_type() {
+            Ok(t) if t.is_dir() => walk(&p, out),
+            Ok(t) if t.is_file() && is_audio(&p) => out.push(p),
+            _ => {}
+        }
+    }
+}
+
+fn sha256_hex(path: &Path) -> std::io::Result<String> {
+    let mut f = File::open(path)?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Read tags and duration. Never fails the scan: unreadable files just get no metadata.
+pub fn probe(path: &Path) -> Probed {
+    let mut out = Probed::default();
+    let Ok(file) = File::open(path) else {
+        return out;
+    };
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    let Ok(mut format) = symphonia::default::get_probe().probe(
+        &hint,
+        mss,
+        FormatOptions::default(),
+        MetadataOptions::default(),
+    ) else {
+        return out;
+    };
+    if let Some(track) = format.default_track(TrackType::Audio) {
+        if let (Some(tb), Some(d)) = (track.time_base, track.duration) {
+            out.duration_ms = tb.calc_duration(d).map(|t| t.as_millis() as i64);
+        } else if let (Some(frames), Some(rate)) = (
+            track.num_frames,
+            track
+                .codec_params
+                .as_ref()
+                .and_then(|p| p.audio())
+                .and_then(|a| a.sample_rate)
+                .filter(|r| *r > 0),
+        ) {
+            out.duration_ms = Some((frames * 1000 / rate as u64) as i64);
+        }
+    }
+    if let Some(rev) = format.metadata().current() {
+        for tag in &rev.media.tags {
+            match &tag.std {
+                Some(StandardTag::TrackTitle(v)) if out.title.is_none() => {
+                    out.title = Some(v.to_string())
+                }
+                Some(StandardTag::Artist(v)) if out.artist.is_none() => {
+                    out.artist = Some(v.to_string())
+                }
+                Some(StandardTag::Album(v)) if out.album.is_none() => {
+                    out.album = Some(v.to_string())
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+fn mtime_secs(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Walk the library, add new files, refresh changed ones, drop vanished ones.
+/// Hashing and probing happen without holding the database lock.
+pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
+    let mut stats = ScanStats::default();
+    let mut files = Vec::new();
+    walk(root, &mut files);
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for path in files {
+        let Ok(rel) = path.strip_prefix(root) else {
+            continue;
+        };
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        seen.insert(rel.clone());
+        let Ok(meta) = std::fs::metadata(&path) else {
+            stats.errors += 1;
+            continue;
+        };
+        let (bytes, mtime) = (meta.len() as i64, mtime_secs(&meta));
+
+        let existing: Option<(i64, i64, i64)> = db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT id, bytes, mtime FROM file WHERE path=?1",
+                [&rel],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .unwrap_or(None);
+        if let Some((_, b, m)) = existing
+            && b == bytes
+            && m == mtime
+        {
+            stats.unchanged += 1;
+            continue;
+        }
+
+        let Ok(sha) = sha256_hex(&path) else {
+            stats.errors += 1;
+            continue;
+        };
+        let p = probe(&path);
+        let codec = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        let title = p.title.clone().unwrap_or_else(|| {
+            path.file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| rel.clone())
+        });
+
+        let conn = db.lock().unwrap();
+        let res: rusqlite::Result<()> = (|| {
+            match existing {
+                Some((id, _, _)) => {
+                    conn.execute(
+                        "UPDATE file SET sha256=?1, bytes=?2, mtime=?3, codec=?4, duration_ms=?5 WHERE id=?6",
+                        params![sha, bytes, mtime, codec, p.duration_ms, id],
+                    )?;
+                    conn.execute(
+                        "UPDATE track SET title=?1, artist=?2, album=?3, duration_ms=?4 WHERE preferred_file_id=?5",
+                        params![title, p.artist, p.album, p.duration_ms, id],
+                    )?;
+                }
+                None => {
+                    conn.execute(
+                        "INSERT INTO file(sha256, path, bytes, mtime, codec, duration_ms) VALUES(?1,?2,?3,?4,?5,?6)",
+                        params![sha, rel, bytes, mtime, codec, p.duration_ms],
+                    )?;
+                    let id = conn.last_insert_rowid();
+                    conn.execute(
+                        "INSERT INTO track(title, artist, album, duration_ms, preferred_file_id) VALUES(?1,?2,?3,?4,?5)",
+                        params![title, p.artist, p.album, p.duration_ms, id],
+                    )?;
+                }
+            }
+            Ok(())
+        })();
+        match (res, existing) {
+            (Ok(()), Some(_)) => stats.updated += 1,
+            (Ok(()), None) => stats.added += 1,
+            (Err(_), _) => stats.errors += 1,
+        }
+    }
+
+    // Drop files that vanished from disk (their tracks go with them).
+    let conn = db.lock().unwrap();
+    let known: Vec<(i64, String)> = conn
+        .prepare("SELECT id, path FROM file")
+        .and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect())
+        .unwrap_or_default();
+    for (id, path) in known {
+        if !seen.contains(&path) && conn.execute("DELETE FROM file WHERE id=?1", [id]).is_ok() {
+            stats.removed += 1;
+        }
+    }
+    stats
+}

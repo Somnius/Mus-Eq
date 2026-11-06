@@ -9,7 +9,9 @@ RUN cargo build --release -p museq-server
 
 FROM debian:stable-slim
 COPY --from=build /src/target/release/museq-server /usr/local/bin/museq-server
-ENV MUSEQ_BIND=0.0.0.0:8080
+RUN mkdir /data /music && chown 65534:65534 /data
+ENV MUSEQ_BIND=0.0.0.0:8080 MUSEQ_DB=/data/museq.db MUSEQ_LIBRARY=/music
+VOLUME ["/data"]
 EXPOSE 8080
 USER 65534:65534
 ENTRYPOINT ["/usr/local/bin/museq-server"]
