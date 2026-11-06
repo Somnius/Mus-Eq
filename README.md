@@ -1,4 +1,14 @@
-# Mus-Eq
+<p align="center">
+  <img src="assets/logo.svg" alt="Mus-Eq logo" width="128" height="128">
+</p>
+
+<h1 align="center">Mus-Eq</h1>
+
+<p align="center">
+<!-- stack:start -->
+![Rust edition 2024](https://img.shields.io/badge/Rust-edition_2024-dea584?style=flat-square&logo=rust&logoColor=white) ![axum 0.8](https://img.shields.io/badge/axum-0.8-2f2f2f?style=flat-square) ![tokio 1.54](https://img.shields.io/badge/tokio-1.54-2f2f2f?style=flat-square) ![SQLite rusqlite 0.41](https://img.shields.io/badge/SQLite-rusqlite_0.41-003b57?style=flat-square&logo=sqlite&logoColor=white) ![Symphonia 0.6](https://img.shields.io/badge/Symphonia-0.6-2f2f2f?style=flat-square) ![TypeScript 7.0](https://img.shields.io/badge/TypeScript-7.0-3178c6?style=flat-square&logo=typescript&logoColor=white) ![Vite 8.3](https://img.shields.io/badge/Vite-8.3-646cff?style=flat-square&logo=vite&logoColor=white) ![Webamp 2.3](https://img.shields.io/badge/Webamp-2.3-4caf50?style=flat-square) ![OpenAPI 3.1.0](https://img.shields.io/badge/OpenAPI-3.1.0-6ba539?style=flat-square&logo=openapiinitiative&logoColor=white) ![Docker Containerfile](https://img.shields.io/badge/Docker-Containerfile-2496ed?style=flat-square&logo=docker&logoColor=white)
+<!-- stack:end -->
+</p>
 
 A self-hosted music server and player. One headless server (Docker or Podman) that holds your library, fetches tracks, builds playlists, fixes tags, finds duplicates and streams radio. Thin clients talk to it over one API: a web player, and native players for Windows, Linux and Android. The first skin is the classic Winamp look.
 

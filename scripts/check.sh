@@ -9,8 +9,9 @@ run cargo clippy --all-targets -- -D warnings
 run cargo test
 (cd web && run npm ci --no-audit --no-fund >/dev/null && run npm run build >/dev/null)
 npx --yes @redocly/cli@2.76.0 lint docs/openapi.yaml | tail -2
+python3 scripts/readme-badges.py --check
 
-work=$(mktemp -d); trap 'kill ${pid:-0} 2>/dev/null || true; rm -rf "$work"' EXIT
+mkdir -p .work/tmp; work=$(mktemp -d "$PWD/.work/tmp/check.XXXXXX"); trap 'kill ${pid:-0} 2>/dev/null || true; rm -rf "$work"' EXIT
 token=$(head -c 24 /dev/urandom | base64 | tr -d '/+=')
 port=${MUSEQ_TEST_PORT:-8096}
 MUSEQ_TOKEN=$token MUSEQ_BIND=127.0.0.1:$port MUSEQ_LIBRARY=$PWD/crates/museq-server/tests/fixtures/lib \

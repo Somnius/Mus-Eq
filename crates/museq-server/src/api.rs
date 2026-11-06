@@ -96,6 +96,8 @@ pub fn router(state: AppState) -> Router {
             get(crate::skins::list_skins).post(crate::skins::upload_skin),
         )
         .route("/v1/skins/{id}", get(crate::skins::get_skin))
+        .route("/v1/stations", get(crate::stations::list_stations).post(crate::stations::add_station))
+        .route("/v1/stations/{id}", axum::routing::delete(crate::stations::delete_station))
         .layer(DefaultBodyLimit::max(crate::skins::MAX_SKIN_BYTES))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth));
     let mut app = Router::new()
