@@ -6,7 +6,7 @@ Status and exit checks only; behavior is in `SPEC.md`, choices in `DECISIONS.md`
 |---|---|---|
 | 0 | Decisions, specs, scaffold | done |
 | 1a | Server core: config, token, SQLite, scan, tracks, range audio | done (pending CI run) |
-| 1b | Web client (Webamp), session + WebSocket | todo |
+| 1b | Web client (Webamp), session + WebSocket | built, awaiting review and green light |
 | 2 | Stations (external list, passthrough) | todo |
 | 3 | Metadata, duplicates, fetch, playlist extension | todo |
 | 4 | Native clients + offline (Android, desktop) | todo |
@@ -36,12 +36,17 @@ Exit met: with `curl` and a token a mixed folder scans, searches and streams wit
 Follow-ups done the same day: accent/case-insensitive Greek search (`search_text`, migration v2), a crashed scan now marks its job failed instead of blocking later scans, nullable fields fixed in the contract. Not tested: the scan-panic path (only reasoned), and a request from another machine on the LAN (owner to try: `curl http://<server-ip>:8080/v1/health` after publishing the port beyond localhost).
 Known gaps carried to later: artist/album are plain text columns (own tables when dedupe needs them); `<audio>` elements can't send an Authorization header, so phase 1b needs a cookie or a short-lived signed URL for audio; the DB mutex is held for short queries only, fine for one owner.
 
-## Phase 1b: web client + session (~2 weeks)
-- [ ] `docs/SPEC-skin.md` (write first)
-- [ ] Vite + TypeScript client with Webamp, default classic skin, `.wsz` upload
-- [ ] `GET/POST /v1/session` and `/v1/events` (WebSocket); one global session
-- [ ] Omarchy now-playing widget reads the session API (read-only token)
-Exit: play a local album in the browser from another machine; the widget shows now-playing.
+## Phase 1b: web client + session (built 2026-11-07, not yet reviewed or pushed)
+- [x] `docs/SPEC-skin.md`
+- [x] Server: cookie login/logout + CSRF guard, `GET/POST /v1/session` (report and commands), `/v1/events` WebSocket with Origin check, skin upload/list/download, static web serving with SPA fallback; 11 integration tests
+- [x] Web client (Vite + TypeScript + Webamp 2.3.1, MIT): login, library with search, Play/Add, skin upload and picker, session reporting, remote commands. Headless-browser smoke test passes against the dev binary and against the Docker image (login, Greek search, Webamp renders, session reports the track, remote pause obeyed, no console errors)
+- [x] `contrib/now-playing.sh` for status bars and widgets (text or JSON, plus play/pause/next/previous); tested against a live server
+- [ ] Omarchy bar-widget packaging: not done. The plugin format is unverified, so only the script exists
+- [ ] Read-only token: dropped for now. The widget uses the owner token on the owner's machine
+- [ ] Position reporting from the web client (not reported yet)
+- [ ] Phase review (two independent reviewers) and green light
+Image adds: the built web client (node build stage).
+Exit: play a local album in the browser from another machine; the widget shows now-playing. Checked on localhost only; the other-machine check is still the owner's to try.
 
 ## Phase 2: stations (~1 week)
 - [ ] Station table seeded from `data/stations/trayfm-stations.txt`; add `data/` to the image
@@ -84,5 +89,6 @@ Phone-as-server (Q7), on-device dedupe (Q8), second skins.
 
 ## Phase log
 - 2026-11-06 Phase 0 scaffold, Rust chosen, Greek station seed added.
+- 2026-11-07 Phase 1b built: cookie login, session + WebSocket, skins, Webamp client, now-playing script (review pending).
 - 2026-11-07 Phase 1a built: scan, tracks, Range audio, playlists, token auth.
 - 2026-11-07 Public repo + `v0.1.0`; docs refactored (SPEC-api folded into SPEC, DECISIONS added); phase 1 split into 1a/1b.

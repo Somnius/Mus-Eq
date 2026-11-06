@@ -21,7 +21,9 @@ phone "radio uplink" (Ogg/Opus over HTTP chunks, WebRTC later) --> radio(live)
 - Mic, ducking and mixer live on the phone (the mic is there); the server receives an already-mixed stream.
 - One global playback session: fine for one listener; per-device sessions come later if needed.
 - Bind to localhost by default (`MUSEQ_BIND`). LAN/Tailscale/VPN/tunnel is the owner's network; a public endpoint is opt-in and needs token auth + TLS.
-- Auth: one owner bearer token (token file or env) from phase 1; `/v1/health` is open. Read-only tokens for widgets and per-device tokens later.
+- Auth: one owner token, as `Authorization: Bearer` (scripts, widgets) or as an HttpOnly, SameSite=Strict cookie set by `POST /v1/login` (browsers, so `<audio>`, skins and the WebSocket work). `/v1/health`, `/v1/login`, `/v1/logout` and the static web client are open. Cookie requests that mutate must be JSON or a raw upload (CSRF guard); the WebSocket refuses a foreign `Origin`. The cookie has no `Secure` flag because the server is often used over plain HTTP on a LAN; use TLS in front of a public endpoint. Read-only and per-device tokens are later work.
+- Session: one global session. The playing browser **reports** (`POST /v1/session` `action=report`, with its own `client_id`) on track and state changes and at most every 10 s; the server stores it and broadcasts it on `/v1/events`. Widgets read `GET /v1/session` and send commands (`play|pause|next|previous|volume`), which the server forwards over the WebSocket to the client that last reported; only that client acts, so other open tabs don't start playing. With no connected player a command answers 409. Position is not reported by the web client yet.
+- Web client: built with Vite, served by the server itself from `MUSEQ_WEB_DIR` (same origin, SPA fallback), so cookies need no CORS. In development Vite proxies `/v1` to the server.
 
 ## Stack
 | Layer | Choice | Note |
@@ -55,7 +57,7 @@ Rules: byte identity = sha256. Song identity for dedupe = fingerprint (later); u
 - Audio ids are **file ids**. Playlists and the session refer to track ids; the server picks the track's preferred file.
 - `POST /v1/jobs` with `kind` scan|fetch|tag|fingerprint; `fetch` answers 403 unless enabled in config.
 - Errors are `{ "error": "message" }` with a normal HTTP status.
-- Implemented so far: health, tracks, audio (Range), playlists, scan jobs. Search is case- and accent-insensitive (Greek tonos and final sigma fold) through a `search_text` column.
+- Implemented so far: health, login/logout, tracks, audio (Range), playlists, scan jobs, session + events, skins. Search is case- and accent-insensitive (Greek tonos and final sigma fold) through a `search_text` column.
 
 ## Modules
 1 api · 2 library (scan, tags, hash, quality) · 3 fetch (Spotify link → ISRC/title via Deezer → YouTube Music search → yt-dlp → tag+import) · 4 metadata · 5 dedupe (Chromaprint similarity, keep best, never auto-delete) · 6 playlistext (same genre/style, skip artists already present, introduce new; local pool first, online suggestions only once fetch exists) · 7 radio · 8 transcode · 9 offline (manifest diff, resume) · 10 auth · clients: web, android, desktop, widgets (Omarchy bar widget reading now-playing).
@@ -70,7 +72,7 @@ Rules: byte identity = sha256. Song identity for dedupe = fingerprint (later); u
 | 6 | nothing new (libopus decode in-process) |
 
 ## Skins
-Classic `.wsz` = zip of BMP/CUR/TXT. `docs/SPEC-skin.md` is written at the start of phase 1b, with a golden-image test so renderers (Webamp, WebView, native) don't drift. Bundle only skins whose licence allows it.
+Classic `.wsz` = zip of BMP/CUR/TXT. `docs/SPEC-skin.md` describes storage and the web renderer; a golden-image test is added when the second renderer exists. Bundle only skins whose licence allows it.
 
 ## Audio lessons (from an earlier recording project, applied when relevant)
 - Opus: flush the encoder lookahead (`pre_skip` 312) or the tail is cut; read the last Ogg page's granule for duration; pin one resampler; the Rust Opus path is only proven at speech bitrates, music bitrates are unverified.

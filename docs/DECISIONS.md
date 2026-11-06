@@ -14,3 +14,9 @@
 - 2026-11-07 **Phase 1a data shortcuts:** `artist`/`album` are text columns on `track`, one track per file, ids are SQLite integers exposed as strings, codec = file extension. Proper tables and fingerprints arrive with dedupe (phase 3).
 - 2026-11-07 **Playlist edits:** items are removed/reordered by replacing the whole list (`PUT /v1/playlists/{id}/items`).
 - 2026-11-07 **Server refuses to start without a token** (min 16 characters); it never prints it.
+- 2026-11-07 **Browser auth is a cookie** (HttpOnly, SameSite=Strict) next to the bearer token, because `<audio>`, skin URLs and the WebSocket can't send headers. CSRF guard on cookie-authenticated mutations; WebSocket Origin check.
+- 2026-11-07 **Session = the playing client reports, commands go to it.** Avoids every open tab starting playback.
+- 2026-11-07 **Skins are stored raw and parsed in the browser**; the server never unzips them.
+- 2026-11-07 **No read-only token yet**; widgets use the owner token. Revisit when per-device tokens arrive.
+- 2026-11-07 **Web client is served by the server** (same origin); Vite proxies in development.
+- 2026-11-07 **Process: each phase ends with tests, two independent reviews, doc updates and the owner's green light; commits are local per step and pushes happen at phase completion.**

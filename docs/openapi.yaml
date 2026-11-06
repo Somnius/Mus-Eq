@@ -9,6 +9,7 @@ servers:
   - url: http://127.0.0.1:8080
 security:
   - bearer: []
+  - cookie: []
 tags:
   - name: system
   - name: library
@@ -31,6 +32,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /v1/login:
+    post:
+      tags: [system]
+      operationId: login
+      summary: Exchange the owner token for a session cookie (for browsers)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "204": { description: Cookie set }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/logout:
+    post:
+      tags: [system]
+      operationId: logout
+      summary: Clear the cookie
+      security: []
+      responses:
+        "204": { description: Cookie cleared }
   /v1/tracks:
     get:
       tags: [library]
@@ -216,8 +243,11 @@ paths:
               schema: { $ref: "#/components/schemas/Session" }
     post:
       tags: [session]
-      operationId: controlSession
-      summary: Control playback
+      operationId: postSession
+      summary: >-
+        Two uses. `report`: the playing client says what it is doing (it becomes the session's client).
+        `play|pause|next|previous|volume`: a command from a widget or another client, forwarded over
+        /v1/events to the client that last reported. Commands answer 409 when no player is connected.
       requestBody:
         required: true
         content:
@@ -226,20 +256,34 @@ paths:
               type: object
               required: [action]
               properties:
-                action: { type: string, enum: [play, pause, next, previous, volume] }
+                action: { type: string, enum: [report, play, pause, next, previous, volume] }
+                client_id: { type: string, maxLength: 64, description: Required for report }
+                state: { type: string, enum: [stopped, playing, paused] }
                 track_id: { type: string }
+                position_ms: { type: integer, minimum: 0 }
                 volume: { type: number, minimum: 0, maximum: 1 }
       responses:
         "200":
-          description: New session state
+          description: Report stored; the new session
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Session" }
+        "202":
+          description: Command forwarded to the playing client
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "400": { description: Invalid body, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409":
+          description: No player is connected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/events:
     get:
       tags: [session]
       operationId: events
-      summary: WebSocket upgrade for server events (session changes, job progress)
+      summary: WebSocket upgrade. Sends a session snapshot, then {type:session} and {type:command,target} messages. A browser Origin that differs from Host is refused (403).
       responses:
         "101": { description: Switching protocols }
   /v1/stations:
@@ -333,7 +377,7 @@ paths:
     post:
       tags: [skins]
       operationId: uploadSkin
-      summary: Upload a .wsz skin
+      summary: Upload a .wsz skin (raw zip body, at most 8 MiB, never unpacked by the server). Optional ?name=.
       requestBody:
         required: true
         content:
@@ -350,6 +394,11 @@ components:
     bearer:
       type: http
       scheme: bearer
+    cookie:
+      type: apiKey
+      in: cookie
+      name: museq_token
+      description: Set by POST /v1/login (HttpOnly, SameSite=Strict). With cookie auth, mutating requests must be application/json or application/octet-stream (415 otherwise).
   parameters:
     Id:
       name: id
@@ -404,10 +453,11 @@ components:
       required: [state]
       properties:
         state: { type: string, enum: [stopped, playing, paused] }
-        track: { $ref: "#/components/schemas/Track" }
+        track: { oneOf: [{ $ref: "#/components/schemas/Track" }, { type: "null" }] }
         station_id: { type: string }
         position_ms: { type: integer }
         volume: { type: number }
+        client_id: { type: [string, "null"], description: The client that last reported }
     Station:
       type: object
       required: [id, name, kind]
