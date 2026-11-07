@@ -14,6 +14,14 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::{MetadataOptions, StandardTag};
 
+/// Test hook: with `MUSEQ_TEST_HOOKS=1`, a file whose name contains a marker makes that stage panic
+/// on purpose, so the tests can prove a crash never wedges the job queue. Never set in production.
+pub fn test_hook(path: &str, marker: &str) {
+    if std::env::var_os("MUSEQ_TEST_HOOKS").is_some() && path.contains(marker) {
+        panic!("test hook: {marker}");
+    }
+}
+
 const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "ogg", "oga", "opus", "m4a", "aac", "wav", "aif", "aiff",
 ];
@@ -159,6 +167,7 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
             continue;
         };
         let rel = rel.to_string_lossy().replace('\\', "/");
+        test_hook(&rel, "__museq_panic_scan__"); // outside every guard: the job itself must survive it
         seen.insert(rel.clone());
         let Ok(meta) = std::fs::metadata(&path) else {
             stats.errors += 1;
@@ -186,7 +195,11 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
             stats.errors += 1;
             continue;
         };
-        let p = std::panic::catch_unwind(|| probe(&path)).unwrap_or_default();
+        let p = std::panic::catch_unwind(|| {
+            test_hook(&path.to_string_lossy(), "__museq_panic_probe__");
+            probe(&path)
+        })
+        .unwrap_or_default();
         let codec = path
             .extension()
             .and_then(|e| e.to_str())

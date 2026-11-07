@@ -98,12 +98,12 @@ async fn the_same_recording_in_three_formats_is_one_group_and_merging_keeps_ever
     .unwrap();
     let app = app_for(dir.path());
 
-    assert_eq!(run_job(&app, "scan").await["added"], 5);
+    assert_eq!(run_job(&app, "scan").await["added"], 6);
     let fp = run_job(&app, "fingerprint").await;
     assert_eq!(
-        (fp["fingerprinted"].as_i64(), fp["unsupported"].as_i64()),
-        (Some(4), Some(1)),
-        "Opus cannot be decoded yet and must not fail the job: {fp}"
+        (fp["fingerprinted"].as_i64(), fp["failed"].as_i64()),
+        (Some(5), Some(1)),
+        "five files fingerprint (Opus included); the one-second tone is too short and must not fail the job: {fp}"
     );
 
     let (_, dups) = call(&app, Method::GET, "/v1/duplicates", None).await;
@@ -113,10 +113,11 @@ async fn the_same_recording_in_three_formats_is_one_group_and_merging_keeps_ever
     let flac = file_id(&g["files"], "src1.flac");
     let mp3 = file_id(&g["files"], "src1.mp3");
     let ogg = file_id(&g["files"], "src1.ogg");
+    let opus = file_id(&g["files"], "src1.opus");
     assert_eq!(
         g["files"].as_array().unwrap().len(),
-        3,
-        "the other noise source and the opus file must stay out: {g}"
+        4,
+        "flac, mp3, ogg and Opus of one source; the other noise source and the short tone stay out: {g}"
     );
     assert_eq!(
         g["keep_file_id"],
@@ -135,11 +136,11 @@ async fn the_same_recording_in_three_formats_is_one_group_and_merging_keeps_ever
     // a playlist holding the mp3's track
     let (_, mp3_track) = call(&app, Method::GET, "/v1/tracks?q=Noise%20One", None).await;
     assert_eq!(
-        mp3_track["total"], 3,
-        "search is a substring match: flac, mp3 and the ogg rip all contain it: {mp3_track}"
+        mp3_track["total"], 4,
+        "search is a substring match: flac, mp3, opus and the ogg rip all contain it: {mp3_track}"
     );
     let all = call(&app, Method::GET, "/v1/tracks?limit=50", None).await.1;
-    assert_eq!(all["total"], 5);
+    assert_eq!(all["total"], 6);
     let mp3_track_id = all["items"]
         .as_array()
         .unwrap()
@@ -170,7 +171,7 @@ async fn the_same_recording_in_three_formats_is_one_group_and_merging_keeps_ever
         &app,
         Method::POST,
         "/v1/duplicates/merge",
-        Some(json!({"file_ids": [flac, mp3, ogg], "keep_file_id": flac})),
+        Some(json!({"file_ids": [flac, mp3, ogg, opus], "keep_file_id": flac})),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{m}");
@@ -189,7 +190,7 @@ async fn the_same_recording_in_three_formats_is_one_group_and_merging_keeps_ever
         "the playlist entry moved to the kept track"
     );
     // nothing was deleted: every file is still on disk and still streams
-    for f in ["src1.flac", "src1.mp3", "src1.ogg"] {
+    for f in ["src1.flac", "src1.mp3", "src1.ogg", "src1.opus"] {
         assert!(dir.path().join(f).exists(), "{f} must still be on disk");
     }
     assert_eq!(
@@ -310,7 +311,7 @@ async fn merge_validates_its_input() {
     }
     assert_eq!(
         call(&app, Method::GET, "/v1/tracks?limit=50", None).await.1["total"],
-        4,
+        5,
         "a refused merge changes nothing"
     );
 }

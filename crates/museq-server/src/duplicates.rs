@@ -17,11 +17,13 @@ use crate::{db, fingerprint};
 
 /// Chromaprint segment score: lower means more alike. Re-encodes of one source scored 0.3 to 1.1
 /// on synthetic noise, a different source 7.0. Tuned on synthetic audio only: check on real music.
-const MAX_SCORE: f64 = 2.0;
+pub const MAX_SCORE: f64 = 2.0;
+/// Edges up to this score are stored, so the threshold can move without recomputing everything.
+pub const STORE_MAX_SCORE: f64 = 4.0;
 /// The matching segment must cover at least this much of the shorter fingerprint.
 const MIN_COVERAGE: f64 = 0.8;
 /// Only files whose lengths differ by at most this many milliseconds are compared.
-const DURATION_WINDOW_MS: i64 = 4000;
+pub const DURATION_WINDOW_MS: i64 = 4000;
 
 #[derive(Clone, Serialize)]
 pub struct FileInfo {
@@ -36,6 +38,8 @@ pub struct FileInfo {
     sample_rate: Option<i64>,
     bytes: i64,
     duration_ms: Option<i64>,
+    #[serde(skip)]
+    id: i64,
     #[serde(skip)]
     sha256: String,
 }
@@ -84,53 +88,73 @@ fn quality(f: &FileInfo) -> (bool, i64, i64, i64) {
     )
 }
 
-fn load(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<(FileInfo, Option<Vec<u32>>)>> {
+fn load(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<FileInfo>> {
     let mut st = conn.prepare(
         "SELECT f.id, f.track_id, t.title, t.artist, f.path, f.codec, f.lossless, f.bitrate_kbps, f.sample_rate, f.bytes,
-                f.duration_ms, f.sha256, p.status, p.data
-         FROM file f LEFT JOIN track t ON t.id = f.track_id
-         LEFT JOIN fingerprint p ON p.file_id = f.id AND p.sha256 = f.sha256
-         ORDER BY f.id",
+                f.duration_ms, f.sha256
+         FROM file f LEFT JOIN track t ON t.id = f.track_id ORDER BY f.id",
     )?;
     let rows = st.query_map([], |r| {
         let id: i64 = r.get(0)?;
-        let status: Option<String> = r.get(12)?;
-        let data: Option<Vec<u8>> = r.get(13)?;
-        let fp = if status.as_deref() == Some("ok") {
-            data.map(|d| fingerprint::from_blob(&d))
-        } else {
-            None
-        };
-        Ok((
-            FileInfo {
-                file_id: id.to_string(),
-                track_id: r.get::<_, Option<i64>>(1)?.map(|v| v.to_string()),
-                title: r.get(2)?,
-                artist: r.get(3)?,
-                path: r.get(4)?,
-                codec: r.get(5)?,
-                lossless: r.get::<_, i64>(6)? != 0,
-                bitrate_kbps: r.get(7)?,
-                sample_rate: r.get(8)?,
-                bytes: r.get(9)?,
-                duration_ms: r.get(10)?,
-                sha256: r.get(11)?,
-            },
-            fp,
-        ))
+        Ok(FileInfo {
+            file_id: id.to_string(),
+            track_id: r.get::<_, Option<i64>>(1)?.map(|v| v.to_string()),
+            title: r.get(2)?,
+            artist: r.get(3)?,
+            path: r.get(4)?,
+            codec: r.get(5)?,
+            lossless: r.get::<_, i64>(6)? != 0,
+            bitrate_kbps: r.get(7)?,
+            sample_rate: r.get(8)?,
+            bytes: r.get(9)?,
+            duration_ms: r.get(10)?,
+            id,
+            sha256: r.get(11)?,
+        })
     })?;
     rows.collect()
 }
 
-fn group_files(files: Vec<(FileInfo, Option<Vec<u32>>)>) -> Vec<Group> {
+/// How alike two fingerprints are. Scores are Chromaprint's: lower means more alike.
+#[derive(Debug, Clone, Copy)]
+pub struct Comparison {
+    /// The best score among matching stretches that cover at least `MIN_COVERAGE` of the
+    /// shorter recording (infinity if none does): this is what the duplicate decision uses.
+    pub covered_score: f64,
+    /// The best score of any matching stretch, and what share of the shorter recording it covers.
+    pub best_score: f64,
+    pub best_coverage: f64,
+}
+
+pub fn compare(a: &[u32], b: &[u32]) -> Option<Comparison> {
     let cfg = fingerprint::config();
+    let segs = match_fingerprints(a, b, &cfg).ok()?;
+    let shorter = a.len().min(b.len()) as f64 * cfg.item_duration_in_seconds() as f64;
+    if shorter <= 0.0 {
+        return None;
+    }
+    let covered_score = segs
+        .iter()
+        .filter(|s| s.duration(&cfg) as f64 >= shorter * MIN_COVERAGE)
+        .map(|s| s.score)
+        .fold(f64::INFINITY, f64::min);
+    let best = segs.iter().min_by(|x, y| x.score.total_cmp(&y.score));
+    Some(Comparison {
+        covered_score,
+        best_score: best.map_or(f64::INFINITY, |s| s.score),
+        best_coverage: best.map_or(0.0, |s| s.duration(&cfg) as f64 / shorter),
+    })
+}
+
+fn group_files(files: Vec<FileInfo>, edges: Vec<(i64, i64, f64)>) -> Vec<Group> {
     let n = files.len();
+    let index: HashMap<i64, usize> = files.iter().enumerate().map(|(i, f)| (f.id, i)).collect();
     let mut dsu = Dsu((0..n).collect());
     let mut proofs: Vec<(usize, usize, &'static str, Option<f64>)> = Vec::new();
 
     // 1. identical bytes
     let mut by_hash: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (i, (f, _)) in files.iter().enumerate() {
+    for (i, f) in files.iter().enumerate() {
         by_hash.entry(f.sha256.as_str()).or_default().push(i);
     }
     for idx in by_hash.values().filter(|v| v.len() > 1) {
@@ -140,34 +164,14 @@ fn group_files(files: Vec<(FileInfo, Option<Vec<u32>>)>) -> Vec<Group> {
         }
     }
 
-    // 2. the same audio: compare fingerprints of files of similar length only
-    let mut order: Vec<usize> = (0..n).filter(|&i| files[i].1.is_some()).collect();
-    order.sort_by_key(|&i| files[i].0.duration_ms.unwrap_or(0));
-    for (pos, &i) in order.iter().enumerate() {
-        for &j in &order[pos + 1..] {
-            let (di, dj) = (
-                files[i].0.duration_ms.unwrap_or(0),
-                files[j].0.duration_ms.unwrap_or(0),
-            );
-            if dj - di > DURATION_WINDOW_MS {
-                break;
-            }
-            let (a, b) = (
-                files[i].1.as_deref().unwrap_or(&[]),
-                files[j].1.as_deref().unwrap_or(&[]),
-            );
-            if let Ok(segs) = match_fingerprints(a, b, &cfg) {
-                let shorter = a.len().min(b.len()) as f64 * cfg.item_duration_in_seconds() as f64;
-                let best = segs
-                    .iter()
-                    .filter(|s| s.duration(&cfg) as f64 >= shorter * MIN_COVERAGE)
-                    .map(|s| s.score)
-                    .fold(f64::INFINITY, f64::min);
-                if best <= MAX_SCORE {
-                    dsu.union(i, j);
-                    proofs.push((i, j, "audio", Some((best * 100.0).round() / 100.0)));
-                }
-            }
+    // 2. the same audio: the pairs the fingerprint job found (stored, not recomputed here)
+    for (a, b, score) in edges {
+        if score > MAX_SCORE {
+            continue;
+        }
+        if let (Some(&i), Some(&j)) = (index.get(&a), index.get(&b)) {
+            dsu.union(i, j);
+            proofs.push((i, j, "audio", Some((score * 100.0).round() / 100.0)));
         }
     }
 
@@ -183,11 +187,11 @@ fn group_files(files: Vec<(FileInfo, Option<Vec<u32>>)>) -> Vec<Group> {
         }
         // already merged into one track: nothing left to decide
         let tracks: std::collections::HashSet<_> =
-            idx.iter().map(|&i| files[i].0.track_id.clone()).collect();
+            idx.iter().map(|&i| files[i].track_id.clone()).collect();
         if tracks.len() == 1 && tracks.iter().next().unwrap().is_some() {
             continue;
         }
-        let mut members: Vec<FileInfo> = idx.iter().map(|&i| files[i].0.clone()).collect();
+        let mut members: Vec<FileInfo> = idx.iter().map(|&i| files[i].clone()).collect();
         let keep = members
             .iter()
             .max_by_key(|f| quality(f))
@@ -203,8 +207,8 @@ fn group_files(files: Vec<(FileInfo, Option<Vec<u32>>)>) -> Vec<Group> {
             .iter()
             .filter(|(a, b, _, _)| idx.contains(a) && idx.contains(b))
             .map(|(a, b, kind, score)| Proof {
-                a: files[*a].0.file_id.clone(),
-                b: files[*b].0.file_id.clone(),
+                a: files[*a].file_id.clone(),
+                b: files[*b].file_id.clone(),
                 kind,
                 score: *score,
             })
@@ -220,15 +224,133 @@ fn group_files(files: Vec<(FileInfo, Option<Vec<u32>>)>) -> Vec<Group> {
 }
 
 pub async fn list_duplicates(State(s): State<AppState>) -> Response {
-    let loaded = load(&db::lock(&s.db));
+    let loaded: rusqlite::Result<(Vec<FileInfo>, Vec<(i64, i64, f64)>, i64)> = (|| {
+        let conn = db::lock(&s.db);
+        let files = load(&conn)?;
+        let edges = conn
+            .prepare("SELECT a, b, score FROM audio_match WHERE score <= ?1")?
+            .query_map([MAX_SCORE], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let pending: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM fingerprint WHERE status='ok' AND compared=0",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok((files, edges, pending))
+    })();
     match loaded {
-        // the comparison is CPU work: keep it off the async threads
-        Ok(files) => match tokio::task::spawn_blocking(move || group_files(files)).await {
-            Ok(groups) => Json(json!({"groups": groups, "note": "nothing is deleted; merging only joins files under one track"})).into_response(),
-            Err(e) => internal(e),
-        },
+        Ok((files, edges, pending)) => {
+            match tokio::task::spawn_blocking(move || group_files(files, edges)).await {
+                Ok(groups) => Json(json!({
+                    "groups": groups,
+                    "pending_comparisons": pending,
+                    "note": "nothing is deleted; merging only joins files under one track"
+                }))
+                .into_response(),
+                Err(e) => internal(e),
+            }
+        }
         Err(e) => internal(e),
     }
+}
+
+/// Compare every newly fingerprinted file with the rest of the library (within the duration
+/// window) and store the pairs that sound alike. Runs at the end of the fingerprint job, a few
+/// threads at a time. Returns (files compared, matching pairs stored).
+pub fn compare_new(db: &std::sync::Mutex<rusqlite::Connection>) -> (usize, usize) {
+    struct Row {
+        id: i64,
+        dur: i64,
+        done: bool,
+        fp: Vec<u32>,
+    }
+    let mut rows: Vec<Row> = {
+        let conn = db::lock(db);
+        let q = conn.prepare(
+            "SELECT f.id, COALESCE(f.duration_ms, 0), p.compared, p.data FROM fingerprint p
+             JOIN file f ON f.id = p.file_id AND f.sha256 = p.sha256 WHERE p.status = 'ok'",
+        );
+        match q.and_then(|mut st| {
+            st.query_map([], |r| {
+                Ok(Row {
+                    id: r.get(0)?,
+                    dur: r.get(1)?,
+                    done: r.get::<_, i64>(2)? != 0,
+                    fp: fingerprint::from_blob(&r.get::<_, Vec<u8>>(3)?),
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+        }) {
+            Ok(v) => v,
+            Err(_) => return (0, 0),
+        }
+    };
+    rows.sort_by_key(|r| r.dur);
+    let todo: Vec<usize> = (0..rows.len()).filter(|&i| !rows[i].done).collect();
+    if todo.is_empty() {
+        return (0, 0);
+    }
+    let threads = std::thread::available_parallelism()
+        .map_or(2, |n| n.get())
+        .clamp(1, 4);
+    let chunk = todo.len().div_ceil(threads);
+    let rows_ref = &rows;
+    let edges: Vec<(i64, i64, f64)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = todo
+            .chunks(chunk)
+            .map(|part| {
+                scope.spawn(move || {
+                    let mut out = Vec::new();
+                    for &i in part {
+                        let lo = rows_ref
+                            .partition_point(|r| r.dur < rows_ref[i].dur - DURATION_WINDOW_MS);
+                        for j in lo..rows_ref.len() {
+                            if rows_ref[j].dur > rows_ref[i].dur + DURATION_WINDOW_MS {
+                                break;
+                            }
+                            // two new files are compared once: from the one with the smaller id
+                            if j == i || (!rows_ref[j].done && rows_ref[j].id < rows_ref[i].id) {
+                                continue;
+                            }
+                            if let Some(c) = compare(&rows_ref[i].fp, &rows_ref[j].fp)
+                                && c.covered_score <= STORE_MAX_SCORE
+                            {
+                                let (a, b) = (
+                                    rows_ref[i].id.min(rows_ref[j].id),
+                                    rows_ref[i].id.max(rows_ref[j].id),
+                                );
+                                out.push((a, b, c.covered_score));
+                            }
+                        }
+                    }
+                    out
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
+    });
+    let mut conn = db::lock(db);
+    let stored = edges.len();
+    let _ = (|| -> rusqlite::Result<()> {
+        let tx = conn.transaction()?;
+        for (a, b, score) in &edges {
+            tx.execute(
+                "INSERT OR REPLACE INTO audio_match(a, b, score) VALUES(?1,?2,?3)",
+                params![a, b, score],
+            )?;
+        }
+        for &i in &todo {
+            tx.execute(
+                "UPDATE fingerprint SET compared = 1 WHERE file_id = ?1",
+                [rows[i].id],
+            )?;
+        }
+        tx.commit()
+    })();
+    (todo.len(), stored)
 }
 
 #[derive(Deserialize)]

@@ -30,6 +30,8 @@ pub struct Services {
     pub user_agent: String,
     pub mb_interval: Duration,
     pub acoustid_interval: Duration,
+    /// How long to wait before retrying a 429/503 (doubles once; tests use zero)
+    pub retry_backoff: Duration,
 }
 
 impl Default for Services {
@@ -44,6 +46,7 @@ impl Default for Services {
             ),
             mb_interval: Duration::from_millis(1100), // MusicBrainz: at most one request per second
             acoustid_interval: Duration::from_millis(350), // AcoustID: at most three per second
+            retry_backoff: Duration::from_secs(4),
         }
     }
 }
@@ -114,6 +117,26 @@ async fn get_json(client: &reqwest::Client, url: reqwest::Url) -> Result<Value, 
     serde_json::from_slice(&body).map_err(|e| format!("not JSON: {e}"))
 }
 
+/// Pick the release that best stands for a recording: an official album that is not a live
+/// recording or compilation, else any official release, else the first; earliest date wins.
+fn best_release(releases: &[Value]) -> Option<&Value> {
+    let rank = |r: &&Value| {
+        let official = r["status"] == "Official";
+        let group = &r["release-group"];
+        let plain_album = group["primary-type"] == "Album"
+            && group["secondary-types"]
+                .as_array()
+                .is_none_or(|a| a.is_empty());
+        let date = r["date"]
+            .as_str()
+            .filter(|d| !d.is_empty())
+            .unwrap_or("9999")
+            .to_string();
+        (!official, !plain_album, date)
+    };
+    releases.iter().min_by_key(rank)
+}
+
 pub fn parse_musicbrainz(v: &Value) -> Vec<Candidate> {
     let mut out = Vec::new();
     for r in v["recordings"].as_array().into_iter().flatten() {
@@ -130,7 +153,7 @@ pub fn parse_musicbrainz(v: &Value) -> Vec<Candidate> {
                     .join(", ")
             })
             .filter(|s| !s.is_empty());
-        let rel = r["releases"].as_array().and_then(|a| a.first());
+        let rel = r["releases"].as_array().and_then(|a| best_release(a));
         out.push(Candidate {
             source: "musicbrainz",
             score,
@@ -139,6 +162,7 @@ pub fn parse_musicbrainz(v: &Value) -> Vec<Candidate> {
             album: rel.and_then(|x| x["title"].as_str()).map(String::from),
             year: rel
                 .and_then(|x| x["date"].as_str())
+                .filter(|d| !d.is_empty())
                 .map(|d| d.chars().take(4).collect()),
             mbid: r["id"].as_str().map(String::from),
         });
@@ -181,6 +205,63 @@ pub fn parse_acoustid(v: &Value) -> Vec<Candidate> {
     out
 }
 
+/// One MusicBrainz request, spaced by the shared limiter and retried when the service is busy
+/// (it answers 503 now and then even at one request per second).
+async fn musicbrainz_get(
+    s: &AppState,
+    c: &reqwest::Client,
+    url: reqwest::Url,
+) -> Result<Value, String> {
+    let mut wait = s.services.retry_backoff;
+    let mut last = String::new();
+    for attempt in 0..3 {
+        s.limiters.musicbrainz.wait(s.services.mb_interval).await;
+        match get_json(c, url.clone()).await {
+            Ok(v) => return Ok(v),
+            Err(e)
+                if (e == "HTTP 503" || e == "HTTP 429" || e.contains("error sending request"))
+                    && attempt < 2 =>
+            {
+                last = e;
+                tokio::time::sleep(wait).await;
+                wait *= 2;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last)
+}
+
+fn mb_url(s: &AppState, query: &str, limit: &str) -> Result<reqwest::Url, String> {
+    let mut url = reqwest::Url::parse(&format!(
+        "{}/recording",
+        s.services.musicbrainz_url.trim_end_matches('/')
+    ))
+    .map_err(|e| e.to_string())?;
+    url.query_pairs_mut()
+        .append_pair("query", query)
+        .append_pair("fmt", "json")
+        .append_pair("limit", limit);
+    Ok(url)
+}
+
+/// Best candidates first: highest score, then the earliest release (usually the original).
+fn rank(mut cands: Vec<Candidate>) -> Vec<Candidate> {
+    cands.retain(|c| c.score >= MIN_MB_SCORE);
+    cands.sort_by(|a, b| {
+        b.score.total_cmp(&a.score).then_with(|| {
+            a.year
+                .as_deref()
+                .unwrap_or("9999")
+                .cmp(b.year.as_deref().unwrap_or("9999"))
+        })
+    });
+    let mut seen = std::collections::HashSet::new();
+    cands.retain(|c| seen.insert((c.title.to_lowercase(), c.artist.clone(), c.album.clone())));
+    cands.truncate(CANDIDATES_PER_TRACK);
+    cands
+}
+
 async fn musicbrainz_search(
     s: &AppState,
     c: &reqwest::Client,
@@ -188,27 +269,24 @@ async fn musicbrainz_search(
     artist: Option<&str>,
 ) -> Result<Vec<Candidate>, String> {
     let esc = |t: &str| t.replace('\\', "\\\\").replace('"', "\\\"");
-    let mut q = format!("recording:\"{}\"", esc(title));
+    let mut base = format!("recording:\"{}\"", esc(title));
     if let Some(a) = artist {
-        q.push_str(&format!(" AND artist:\"{}\"", esc(a)));
+        base.push_str(&format!(" AND artist:\"{}\"", esc(a)));
     }
-    let mut url = reqwest::Url::parse(&format!(
-        "{}/recording",
-        s.services.musicbrainz_url.trim_end_matches('/')
-    ))
-    .map_err(|e| e.to_string())?;
-    url.query_pairs_mut()
-        .append_pair("query", &q)
-        .append_pair("fmt", "json")
-        .append_pair("limit", "5");
-    s.limiters.musicbrainz.wait(s.services.mb_interval).await;
-    let v = get_json(c, url).await?;
-    let mut cands: Vec<Candidate> = parse_musicbrainz(&v)
-        .into_iter()
-        .filter(|c| c.score >= MIN_MB_SCORE)
-        .collect();
-    cands.truncate(CANDIDATES_PER_TRACK);
-    Ok(cands)
+    // First ask for official studio albums (live recordings, bootlegs and compilations bury the
+    // original otherwise); fall back to the plain search for singles and odd releases.
+    let strict = format!(
+        "{base} AND status:official AND primarytype:album AND NOT secondarytype:live AND NOT secondarytype:compilation"
+    );
+    let found = rank(parse_musicbrainz(
+        &musicbrainz_get(s, c, mb_url(s, &strict, "10")?).await?,
+    ));
+    if !found.is_empty() {
+        return Ok(found);
+    }
+    Ok(rank(parse_musicbrainz(
+        &musicbrainz_get(s, c, mb_url(s, &base, "10")?).await?,
+    )))
 }
 
 async fn acoustid_lookup(

@@ -174,6 +174,22 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
                UNIQUE(track_id, source, mbid)
              );")?;
     }
+    if version < 7 {
+        // Which files sound alike is worked out once, by the fingerprint job, and stored: asking for
+        // the duplicate list must not compare every pair again (that was quadratic).
+        step(
+            &conn,
+            7,
+            "CREATE TABLE audio_match(
+               a INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+               b INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+               score REAL NOT NULL,           -- Chromaprint score of the best covering stretch: lower is more alike
+               PRIMARY KEY(a, b)
+             );
+             CREATE INDEX audio_match_b ON audio_match(b);
+             ALTER TABLE fingerprint ADD COLUMN compared INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
     // A job left "running" by a crash will never finish.
     conn.execute("UPDATE job SET state='failed', error='interrupted by restart' WHERE state IN ('queued','running')", [])?;
     Ok(conn)
@@ -242,7 +258,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         // data carried across, the new columns filled in, the new tables there
         let (track_id, mtime): (Option<i64>, i64) = conn
             .query_row("SELECT track_id, mtime FROM file WHERE id=7", [], |r| {
@@ -266,7 +282,7 @@ mod tests {
             search.contains("song"),
             "search text is backfilled: {search}"
         );
-        for table in ["skin", "station", "fingerprint", "candidate"] {
+        for table in ["skin", "station", "fingerprint", "candidate", "audio_match"] {
             conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| {
                 r.get::<_, i64>(0)
             })

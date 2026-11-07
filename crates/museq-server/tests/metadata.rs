@@ -66,6 +66,7 @@ fn services(base: &str, key: Option<&str>) -> Services {
         acoustid_key: key.map(String::from),
         mb_interval: Duration::ZERO,
         acoustid_interval: Duration::ZERO,
+        retry_backoff: Duration::ZERO,
         ..Services::default()
     }
 }
@@ -574,5 +575,76 @@ async fn the_acoustid_key_never_appears_in_results_or_errors() {
     assert!(
         !body.to_string().contains(key),
         "error body leaked the key: {body}"
+    );
+}
+
+#[test]
+fn a_real_musicbrainz_reply_is_parsed_and_ranked_sensibly() {
+    use museq_server::metadata::parse_musicbrainz;
+    let real: Value = serde_json::from_str(
+        &std::fs::read_to_string(fixtures("mb").join("recording-search-hotel-california.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let c = parse_musicbrainz(&real);
+    assert!(c.len() >= 5, "{} candidates", c.len());
+    assert!(
+        c.iter()
+            .all(|x| x.mbid.is_some() && x.title.to_lowercase().contains("hotel california"))
+    );
+    assert!(
+        c.iter()
+            .any(|x| x.album.is_some() && x.year.as_deref().is_some_and(|y| y.len() == 4)),
+        "albums and years come through"
+    );
+}
+
+#[tokio::test]
+async fn a_busy_musicbrainz_is_retried_and_the_strict_search_falls_back_to_the_plain_one() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // 1st call: 503; 2nd: the strict query finds nothing; 3rd: the plain query finds a recording
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let (c2, s2) = (calls.clone(), seen.clone());
+    let app = Router::new().route(
+        "/mb/recording",
+        get(move |uri: Uri| {
+            let (c, s) = (c2.clone(), s2.clone());
+            async move {
+                s.lock()
+                    .unwrap()
+                    .push(uri.query().unwrap_or("").to_string());
+                match c.fetch_add(1, Ordering::SeqCst) {
+                    0 => (StatusCode::SERVICE_UNAVAILABLE, axum::Json(json!({}))),
+                    1 => (StatusCode::OK, axum::Json(json!({"recordings": []}))),
+                    _ => (StatusCode::OK, axum::Json(mb_reply())),
+                }
+            }
+        }),
+    );
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", l.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    let dir = untagged_dir();
+    let app = app_for(dir.path(), services(&base, None));
+    run_job(&app, json!({"kind": "scan"})).await;
+    let r = run_job(&app, json!({"kind": "tag"})).await;
+    assert_eq!(
+        (
+            r["candidates_stored"].as_i64(),
+            r["lookups_failed"].as_i64()
+        ),
+        (Some(1), Some(0)),
+        "{r}"
+    );
+    let q = seen.lock().unwrap().clone();
+    assert_eq!(q.len(), 3, "{q:?}");
+    assert!(
+        q[0].contains("status%3Aofficial") && q[1].contains("status%3Aofficial"),
+        "the first two ask for official albums: {q:?}"
+    );
+    assert!(
+        !q[2].contains("status%3Aofficial"),
+        "the last is the plain search: {q:?}"
     );
 }
