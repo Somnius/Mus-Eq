@@ -21,4 +21,6 @@ dependencies {
     implementation("androidx.media3:media3-session:$media3")
     implementation("androidx.media3:media3-datasource:$media3")
     implementation("androidx.core:core-ktx:1.16.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303") // the Android one is a stub in unit tests
 }

@@ -15,19 +15,19 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
 import kotlin.concurrent.thread
 
-class Track(val id: String, val title: String, val artist: String, val fileId: String)
+/** One line of the list: what it says, what a tap does, what a long press does. */
+class Row(val label: String, val onTap: () -> Unit, val onLong: (() -> Unit)? = null)
 
 class MainActivity : Activity() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
-    private var tracks = listOf<Track>()
+    private var rows = listOf<Row>()
+    private var tracks = listOf<Track>() // the tracks behind the rows when the list is a track list
+    private var view = "library"
     private lateinit var status: TextView
     private lateinit var list: ListView
+    private lateinit var query: EditText
     private lateinit var battery: Button
 
     private fun unrestricted() =
@@ -59,22 +59,28 @@ class MainActivity : Activity() {
         val tok = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             hint = "owner token"; setText(Prefs.token(context)) }
-        val q = EditText(this).apply { hint = "search" }
+        query = EditText(this).apply { hint = "search (library and stations)" }
         val go = Button(this).apply { text = "Connect and search" }
         status = TextView(this)
         list = ListView(this)
         battery = Button(this)
         battery.setOnClickListener { allowBackground() }
-        listOf(url, tok, q, go, battery, status, list).forEach { root.addView(it) }
+        val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf("library" to "Library", "lists" to "Lists", "radio" to "Radio", "stations" to "Stations", "pinned" to "Pinned")
+            .forEach { (v, name) -> tabs.addView(Button(this).apply {
+                text = name; isAllCaps = false; setPadding(4, 0, 4, 0)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                setOnClickListener { open(v) } }) }
+        listOf(url, tok, query, go, tabs, battery, status, list).forEach { root.addView(it) }
         setContentView(root)
         go.setOnClickListener {
             val base = url.text.toString().trim()
             if (!(base.startsWith("http://") || base.startsWith("https://"))) { status.text = "address must start with http:// or https://"; return@setOnClickListener }
             Prefs.save(this, base, tok.text.toString())
-            search(q.text.toString())
+            open("library")
         }
-        list.setOnItemClickListener { _, _, i, _ -> tracks.getOrNull(i)?.let { play(it) } }
-        list.setOnItemLongClickListener { _, _, i, _ -> tracks.getOrNull(i)?.let { togglePin(it) }; true }
+        list.setOnItemClickListener { _, _, i, _ -> rows.getOrNull(i)?.onTap?.invoke() }
+        list.setOnItemLongClickListener { _, _, i, _ -> rows.getOrNull(i)?.onLong?.invoke(); true }
     }
 
     override fun onDestroy() {
@@ -85,76 +91,206 @@ class MainActivity : Activity() {
 
     private fun ui(f: () -> Unit) = runOnUiThread { if (!isDestroyed) f() }
 
-    private fun search(q: String) {
-        status.text = "searching…"
-        val app = applicationContext
+    private fun showRows(l: List<Row>) {
+        rows = l
+        list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, l.map { it.label })
+    }
+
+    /** Runs the work off the UI thread; on failure the status line says why. */
+    private fun background(what: String, work: () -> Unit) {
+        status.text = what
         thread {
-            try {
-                val u = URL(Prefs.base(app) + "/v1/tracks?limit=200&q=" + URLEncoder.encode(q, "UTF-8"))
-                val c = u.openConnection() as HttpURLConnection
-                c.instanceFollowRedirects = false
-                c.setRequestProperty("Authorization", "Bearer " + Prefs.token(app))
-                c.connectTimeout = 8000; c.readTimeout = 15000
-                try {
-                    if (c.responseCode != 200) throw RuntimeException("HTTP " + c.responseCode)
-                    val j = JSONObject(c.inputStream.bufferedReader().readText())
-                    val a = j.getJSONArray("items")
-                    val found = (0 until a.length()).map {
-                        val o = a.getJSONObject(it)
-                        Track(o.getString("id"), o.getString("title"),
-                            if (o.isNull("artist")) "" else o.getString("artist"), o.getString("preferred_file_id"))
-                    }
-                    ui { status.text = "${found.size} of ${j.getInt("total")} tracks" +
-                        (if (Prefs.base(app).startsWith("http://")) " (plain http: the token is not encrypted)" else ""); show(found) }
-                } finally { c.disconnect() }
-            } catch (e: Exception) {
-                ui { status.text = "offline or failed (" + (e.message ?: e.javaClass.simpleName) + "), showing pinned"; show(Pins.all(this)) }
+            try { work() } catch (e: Exception) {
+                ui { status.text = "failed: " + (e.message ?: e.javaClass.simpleName) }
             }
         }
     }
+
+    private fun open(v: String) {
+        view = v
+        when (v) {
+            "library" -> library(query.text.toString())
+            "lists" -> playlists()
+            "radio" -> radios()
+            "stations" -> stations(query.text.toString())
+            "pinned" -> pinned()
+        }
+    }
+
+    // ---- tracks ---------------------------------------------------------------------------
 
     private fun label(t: Track) = (if (Pins.isPinned(this, t.fileId)) "[offline] " else "") +
         (if (t.artist.isEmpty()) "" else t.artist + " – ") + t.title
 
     // always called on the UI thread, so the list the user taps and the list the code indexes are the same one
-    private fun show(l: List<Track>) {
+    private fun showTracks(l: List<Track>, header: List<Row> = emptyList()) {
         tracks = l
-        list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, l.map { label(it) })
+        showRows(header + l.map { t -> Row(label(t), { play(t) }, { togglePin(t) }) })
+    }
+
+    private fun library(q: String) {
+        val app = applicationContext
+        background("searching…") {
+            val j = Api.obj(app, "/v1/tracks?limit=200&q=" + Api.enc(q))
+            val a = j.getJSONArray("items")
+            val found = (0 until a.length()).map { Parse.track(a.getJSONObject(it)) }
+            ui { status.text = "${found.size} of ${j.getInt("total")} tracks" + plainHttpNote(); showTracks(found) }
+        }
+    }
+
+    private fun plainHttpNote() =
+        if (Prefs.base(this).startsWith("http://")) " (plain http: the token is not encrypted)" else ""
+
+    private fun playlists() {
+        val app = applicationContext
+        background("loading lists…") {
+            val a = Api.arr(app, "/v1/playlists")
+            val items = (0 until a.length()).map { a.getJSONObject(it) }
+            ui {
+                status.text = "${items.size} lists; tap to open, long-press to pin all its tracks"
+                showRows(items.map { p ->
+                    val n = p.optJSONArray("track_ids")?.length() ?: 0
+                    Row("${p.getString("name")} ($n)", { openPlaylist(p.getString("id"), p.getString("name")) },
+                        { pinPlaylist(p.getString("id"), p.getString("name")) })
+                })
+            }
+        }
+    }
+
+    private fun playlistTracks(app: android.content.Context, id: String): List<Entry> {
+        val ids = Api.obj(app, "/v1/playlists/$id").getJSONArray("track_ids")
+        val order = (0 until ids.length()).map { ids.getString(it) }
+        val (entries, _) = Api.manifest(app, order)
+        val byId = entries.associateBy { it.track.id }
+        return order.mapNotNull { byId[it] }
+    }
+
+    private fun openPlaylist(id: String, name: String) {
+        val app = applicationContext
+        background("opening $name…") {
+            val e = playlistTracks(app, id)
+            ui { status.text = "$name: ${e.size} tracks"
+                showTracks(e.map { it.track }, listOf(Row("‹ back to lists", { playlists() }))) }
+        }
+    }
+
+    private fun pinPlaylist(id: String, name: String) {
+        val app = applicationContext
+        background("pinning $name…") {
+            val entries = playlistTracks(app, id)
+            var failed = 0
+            entries.forEachIndexed { i, e ->
+                if (!Pins.matches(app, e)) {
+                    ui { status.text = "$name: pinning ${i + 1} of ${entries.size}" }
+                    if (Pins.pin(app, e) { _, _ -> } != null) failed++
+                }
+            }
+            ui { status.text = "$name: ${entries.size - failed} of ${entries.size} tracks pinned" +
+                (if (failed > 0) ", $failed failed (long-press the list again to retry)" else "") }
+        }
     }
 
     private fun togglePin(t: Track) {
         if (Pins.isBusy(t.fileId)) { status.text = "already downloading"; return }
-        if (Pins.isPinned(this, t.fileId)) { Pins.unpin(this, t); status.text = "unpinned"; show(tracks); return }
-        status.text = "pinning…"
+        if (Pins.isPinned(this, t.fileId)) { Pins.unpin(this, t); status.text = "unpinned"; showTracks(tracks); return }
         val app = applicationContext
-        thread {
+        background("pinning…") {
+            val e = Api.manifest(app, listOf(t.id)).first.firstOrNull() ?: throw RuntimeException("track not on the server")
             var last = 0L
-            val err = Pins.pin(app, t) { d, tot ->
+            val err = Pins.pin(app, e) { d, tot ->
                 if (System.currentTimeMillis() - last > 500) { last = System.currentTimeMillis()
-                    ui { status.text = if (tot >= 0) "pinning ${d / 1048576} of ${tot / 1048576} MB" else "pinning ${d / 1048576} MB" } } }
-            ui { status.text = if (err == null) "pinned" else "pin failed: $err"; show(tracks) }
+                    ui { status.text = "pinning " + Parse.sizeLabel(d, tot) } } }
+            ui { status.text = if (err == null) "pinned" else "pin failed: $err"; showTracks(tracks) }
         }
     }
+
+    private fun pinned() {
+        val all = Pins.all(this)
+        status.text = "${all.size} pinned; long-press to unpin"
+        showTracks(all, listOf(Row("Check pinned copies against the server", { verifyPins() })))
+    }
+
+    /** Compares every pinned file with the size and SHA-256 the server names; a differing copy is downloaded again. */
+    private fun verifyPins() {
+        val app = applicationContext
+        background("checking pinned copies…") {
+            val mine = Pins.all(app)
+            val (entries, missing) = Api.manifest(app, mine.map { it.id })
+            var ok = 0; var fixed = 0; var failed = 0
+            entries.forEachIndexed { i, e ->
+                if (Pins.matches(app, e)) ok++ else {
+                    ui { status.text = "re-downloading ${i + 1} of ${entries.size}" }
+                    Pins.unpin(app, e.track)
+                    if (Pins.pin(app, e) { _, _ -> } == null) fixed++ else failed++
+                }
+            }
+            ui { status.text = "$ok identical, $fixed re-downloaded, $failed failed, ${missing.size} no longer on the server"
+                pinned().also { status.text = status.text } }
+        }
+    }
+
+    // ---- radio and stations -----------------------------------------------------------------
+
+    private fun radios() {
+        val app = applicationContext
+        background("loading radios…") {
+            val a = Api.arr(app, "/v1/radios")
+            ui {
+                status.text = "${a.length()} library radios; tap to listen"
+                showRows((0 until a.length()).map { a.getJSONObject(it) }.map { r ->
+                    Row("${r.getString("name")} · ${r.getString("codec")} ${r.getInt("kbps")} k · ${r.getInt("listeners")} listening",
+                        { playStream(r.getString("name"), Prefs.base(this) + r.getString("listen_path")) })
+                })
+            }
+        }
+    }
+
+    private fun stations(q: String) {
+        val app = applicationContext
+        background("loading stations…") {
+            val j = Api.obj(app, "/v1/stations?limit=200&q=" + Api.enc(q))
+            val a = j.getJSONArray("items")
+            ui {
+                status.text = "${a.length()} of ${j.getInt("total")} stations; tap to listen"
+                showRows((0 until a.length()).map { a.getJSONObject(it) }.map { s ->
+                    val alive = if (s.isNull("alive")) "" else if (s.getBoolean("alive")) "" else " (down?)"
+                    Row("${s.getString("name")} · ${s.getString("category")}$alive", { playStream(s.getString("name"), s.getString("url")) })
+                })
+            }
+        }
+    }
+
+    // ---- playing --------------------------------------------------------------------------
 
     private fun uriOf(t: Track): Uri =
         if (Pins.isPinned(this, t.fileId)) Uri.fromFile(Pins.file(this, t.fileId))
         else Uri.parse(Prefs.base(this) + "/v1/audio/" + t.fileId)
 
-    private fun play(tapped: Track) {
-        // the queue is the whole visible list; a track that is neither pinned nor reachable stops playback with an error shown in the status line
-        val start = tracks.indexOf(tapped)
-        val items = tracks.map {
-            MediaItem.Builder().setMediaId(it.id).setUri(uriOf(it))
-                .setMediaMetadata(MediaMetadata.Builder().setTitle(it.title).setArtist(it.artist).build()).build()
-        }
+    private fun controller(then: (MediaController) -> Unit) {
         val f = controllerFuture ?: MediaController.Builder(this,
             SessionToken(this, ComponentName(this, PlaybackService::class.java))).buildAsync()
             .also { fut -> controllerFuture = fut
                 fut.addListener({ runCatching { fut.get() }.getOrNull()?.addListener(object : Player.Listener {
                     override fun onPlayerError(e: PlaybackException) { ui { status.text = "playback error: " + e.errorCodeName } }
                 }) }, MoreExecutors.directExecutor()) }
-        f.addListener({
-            runCatching { f.get() }.getOrNull()?.run { setMediaItems(items, start, 0); prepare(); play() }
-        }, MoreExecutors.directExecutor())
+        f.addListener({ runCatching { f.get() }.getOrNull()?.let(then) }, MoreExecutors.directExecutor())
+    }
+
+    private fun play(tapped: Track) {
+        // the queue is the whole visible track list; a track that is neither pinned nor reachable stops
+        // playback with an error shown in the status line
+        val start = tracks.indexOf(tapped)
+        val items = tracks.map {
+            MediaItem.Builder().setMediaId(it.id).setUri(uriOf(it))
+                .setMediaMetadata(MediaMetadata.Builder().setTitle(it.title).setArtist(it.artist).build()).build()
+        }
+        controller { it.setMediaItems(items, start, 0); it.prepare(); it.play() }
+    }
+
+    /** A radio or station: one endless stream. */
+    private fun playStream(name: String, url: String) {
+        val item = MediaItem.Builder().setUri(url)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(name).build()).build()
+        controller { it.setMediaItems(listOf(item)); it.prepare(); it.play() }
     }
 }

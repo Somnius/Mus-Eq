@@ -191,6 +191,40 @@ paths:
                     items: { $ref: "#/components/schemas/Track" }
                   total: { type: integer }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/tracks/manifest:
+    get:
+      tags: [library]
+      operationId: tracksManifest
+      summary: For each asked track id, the track plus the size and SHA-256 of the file that plays (used by offline pins). Unknown ids are listed in `missing`.
+      parameters:
+        - name: ids
+          in: query
+          description: Comma-separated track ids, at most 500
+          schema: { type: string }
+      responses:
+        "200":
+          description: Manifest
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, missing]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [track, file_id, bytes, sha256]
+                      properties:
+                        track: { $ref: "#/components/schemas/Track" }
+                        file_id: { type: string }
+                        bytes: { type: integer }
+                        sha256: { type: string }
+                  missing:
+                    type: array
+                    items: { type: string }
+        "400": { description: "Ids that are not numbers, or more than 500" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /v1/tracks/{id}:
     get:
       tags: [library]

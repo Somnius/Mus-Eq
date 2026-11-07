@@ -406,3 +406,75 @@ async fn a_second_scan_is_refused_while_one_runs() {
     .await;
     assert_eq!(s, StatusCode::CONFLICT);
 }
+
+#[tokio::test]
+async fn manifest_gives_size_and_hash_of_the_playing_file() {
+    use sha2::{Digest, Sha256};
+    let app = app_for(fixtures());
+    scan_and_wait(&app).await;
+    let (_, found) = json_call(&app, Method::GET, "/v1/tracks?limit=5", None).await;
+    let first = &found["items"][0];
+    let id = first["id"].as_str().unwrap();
+
+    // not open without the token
+    let (s, _, _) = call(
+        &app,
+        Method::GET,
+        &format!("/v1/tracks/manifest?ids={id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+
+    let (s, m) = json_call(
+        &app,
+        Method::GET,
+        &format!("/v1/tracks/manifest?ids={id},999999"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(m["missing"], json!(["999999"]));
+    let item = &m["items"][0];
+    assert_eq!(item["track"]["id"], first["id"]);
+    assert_eq!(item["file_id"], first["preferred_file_id"]);
+
+    // the numbers must describe exactly the bytes the audio route serves
+    let (s, _, body) = call(
+        &app,
+        Method::GET,
+        &format!("/v1/audio/{}", item["file_id"].as_str().unwrap()),
+        Some(TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(item["bytes"].as_u64().unwrap(), body.len() as u64);
+    assert_eq!(
+        item["sha256"].as_str().unwrap(),
+        Sha256::digest(&body)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+
+    // bad input is refused, an empty list is fine
+    let (s, _) = json_call(&app, Method::GET, "/v1/tracks/manifest?ids=1,x", None).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let many = (1..=501)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let (s, _) = json_call(
+        &app,
+        Method::GET,
+        &format!("/v1/tracks/manifest?ids={many}"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, m) = json_call(&app, Method::GET, "/v1/tracks/manifest", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(m["items"], json!([]));
+}

@@ -45,13 +45,21 @@ object Pins {
     private fun removeFromIndex(c: Context, t: Track) = write(c, all(c).filter { it.fileId != t.fileId })
 
     /** Downloads the file, resuming a partial one. Returns null on success or an error text. */
-    fun pin(c: Context, t: Track, progress: (Long, Long) -> Unit): String? {
+    fun pin(c: Context, e: Entry, progress: (Long, Long) -> Unit): String? {
+        val t = e.track
         if (!usable(t.fileId)) return "file id not usable offline"
         synchronized(this) { if (!inFlight.add(t.fileId)) return "already downloading" }
-        try { return download(c, t, progress) } finally { synchronized(this) { inFlight.remove(t.fileId) } }
+        try { return download(c, e, progress) } finally { synchronized(this) { inFlight.remove(t.fileId) } }
     }
 
-    private fun download(c: Context, t: Track, progress: (Long, Long) -> Unit): String? {
+    /** True if the stored copy has the size and SHA-256 the server's manifest names. */
+    fun matches(c: Context, e: Entry): Boolean {
+        val f = file(c, e.track.fileId)
+        return usable(e.track.fileId) && f.isFile && f.length() == e.bytes && sha256Hex(f) == e.sha256
+    }
+
+    private fun download(c: Context, e: Entry, progress: (Long, Long) -> Unit): String? {
+        val t = e.track
         val part = File(dir(c), t.fileId + ".part")
         var cn: HttpURLConnection? = null
         try {
@@ -66,16 +74,14 @@ object Pins {
             val code = cn.responseCode
             if (code == 416) {
                 // "bytes */N": if N is the size of what we already hold, the earlier download had finished
-                val total416 = Regex("bytes \\*/(\\d+)").find(cn.getHeaderField("Content-Range") ?: "")?.groupValues?.get(1)?.toLong()
-                if (have > 0 && total416 == have && part.renameTo(file(c, t.fileId))) { addToIndex(c, t); return null }
+                if (have > 0 && Parse.unsatisfiedTotal(cn.getHeaderField("Content-Range")) == have) return finish(c, e, part)
                 part.delete(); return "range refused, retry"
             }
             if (code != 200 && code != 206) return "HTTP $code"
             var resumed = code == 206
             if (resumed) {
                 // the server must continue exactly where our partial file ends
-                val m = Regex("bytes (\\d+)-\\d+/(\\d+|\\*)").find(cn.getHeaderField("Content-Range") ?: "")
-                if (m == null || m.groupValues[1].toLong() != have) { part.delete(); return "resume offset mismatch, retry" }
+                if (Parse.rangeStart(cn.getHeaderField("Content-Range")) != have) { part.delete(); return "resume offset mismatch, retry" }
             }
             if (!resumed) have = 0L
             val len = cn.contentLengthLong
@@ -90,12 +96,18 @@ object Pins {
             }
             // with a known length the size must match; with an unknown one, a clean end of stream is all there is
             if (total >= 0 && part.length() != total) return "incomplete (${part.length()} of $total), retry resumes"
-            if (part.length() == 0L) { part.delete(); return "empty download" }
-            if (!part.renameTo(file(c, t.fileId))) return "could not store the file"
-            addToIndex(c, t)
-            return null
+            return finish(c, e, part)
         } catch (e: Exception) { return e.message ?: e.javaClass.simpleName }
         finally { cn?.disconnect() }
+    }
+
+    /** The partial file becomes the pin only if it has the size and hash the manifest promised. */
+    private fun finish(c: Context, e: Entry, part: File): String? {
+        if (part.length() != e.bytes) { part.delete(); return "size differs from the server's (${part.length()} of ${e.bytes}), retry" }
+        if (sha256Hex(part) != e.sha256) { part.delete(); return "checksum differs from the server's, retry" }
+        if (!part.renameTo(file(c, e.track.fileId))) return "could not store the file"
+        addToIndex(c, e.track)
+        return null
     }
 
     fun unpin(c: Context, t: Track) {

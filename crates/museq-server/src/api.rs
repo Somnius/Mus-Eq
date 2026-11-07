@@ -113,6 +113,7 @@ pub(crate) fn internal<E: std::fmt::Display>(e: E) -> Response {
 pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/v1/tracks", get(search_tracks))
+        .route("/v1/tracks/manifest", get(tracks_manifest))
         .route("/v1/tracks/{id}", get(get_track))
         .route("/v1/audio/{file_id}", get(audio))
         .route("/v1/playlists", get(list_playlists).post(create_playlist))
@@ -420,6 +421,63 @@ async fn get_track(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
         Ok(None) => err(StatusCode::NOT_FOUND, "no such track"),
         Err(e) => internal(e),
     }
+}
+
+#[derive(Deserialize)]
+struct ManifestQuery {
+    ids: Option<String>,
+}
+
+/// Most track ids one manifest request may ask for.
+const MANIFEST_MAX: usize = 500;
+
+/// For each asked track: its details plus the size and SHA-256 of the file that plays, so a client can
+/// build offline pins (and later check that a pinned copy still equals the server's). Ids that name no
+/// track come back in `missing`.
+async fn tracks_manifest(State(s): State<AppState>, Query(q): Query<ManifestQuery>) -> Response {
+    let mut ids = Vec::new();
+    for part in q
+        .ids
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .filter(|p| !p.is_empty())
+    {
+        match part.parse::<i64>() {
+            Ok(id) => ids.push(id),
+            Err(_) => {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "ids must be comma-separated numbers",
+                );
+            }
+        }
+    }
+    if ids.len() > MANIFEST_MAX {
+        return err(StatusCode::BAD_REQUEST, "at most 500 ids per request");
+    }
+    let conn = crate::db::lock(&s.db);
+    let mut items = Vec::new();
+    let mut missing = Vec::new();
+    for id in ids {
+        let row = conn
+            .query_row(
+                "SELECT t.id, t.title, t.artist, t.album, t.duration_ms, t.preferred_file_id, t.genre, \
+                        f.bytes, f.sha256 \
+                 FROM track t JOIN file f ON f.id = t.preferred_file_id WHERE t.id=?1",
+                [id],
+                |r| Ok((track_from_row(r)?, r.get::<_, i64>(7)?, r.get::<_, String>(8)?)),
+            )
+            .optional();
+        match row {
+            Ok(Some((t, bytes, sha256))) => items.push(json!({
+                "track": t, "file_id": t.preferred_file_id, "bytes": bytes, "sha256": sha256,
+            })),
+            Ok(None) => missing.push(id.to_string()),
+            Err(e) => return internal(e),
+        }
+    }
+    Json(json!({ "items": items, "missing": missing })).into_response()
 }
 
 // ---- audio ------------------------------------------------------------
