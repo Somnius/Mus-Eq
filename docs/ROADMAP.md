@@ -116,7 +116,7 @@ Image adds: nothing for 3a to 3d (fingerprinting is in-process Rust; `yt-dlp` is
 Exit (whole phase): a known duplicate pair collapses to one preferred file; a mistagged file changes only on accept; a short playlist grows with no repeated artist; fetch fails cleanly with the flag off. Gate before 3d: independent check, both reviews, docs, green light.
 
 ## Phase 4: native clients + offline (~4-6 weeks)
-- [ ] Android: Media3, foreground service, offline pins, lock-screen controls
+- [ ] Android: Media3, foreground service, offline pins, lock-screen controls. First slice built 2026-11-07 (`android/`, plain views, debug APK): server address and token, search, streaming through a media session service with a notification, long-press offline pins (resumable download checked by `Content-Range`, played from the local file with the server stopped). Checked by hand on a OnePlus 13 over the LAN: streaming, a pin whose hash equals the original, offline playback, a resume from a 10 MB partial file giving an identical file, and a screen-off run that was interrupted at about 24 minutes. **Not done / unverified:** the 1 h screen-off run (not completed), lock-screen controls (not looked at), playlists and radio screens, a change manifest for pins, pinning whole playlists, a HTTPS option (cleartext HTTP is allowed and the token then travels unencrypted; the app says so), the token is stored unencrypted in app-private preferences, no OnePlus battery-optimisation handling, no Android build in CI, no skin (Webamp in a WebView), a queue that mixes pinned and unreachable tracks stops with an error shown in the status line, no automated tests for the app
 - [ ] Desktop shell decision (Q13); optional cliamp provider
 - [ ] Skin parity golden-image test
 - [ ] Packaging checklist: AppImage/NSIS + SHA-256, smoke test on a clean archive, short Windows target dir, pinned tool downloads
@@ -136,6 +136,7 @@ Exit: real handset: music drops while the owner speaks and returns after; a web 
 
 ## Phase 7: polish (ongoing)
 Phone-as-server (Q7), on-device dedupe (Q8), second skins.
+- [ ] Last of all, outside the phases: a build target and install guide for Omamobile (Omarchy mobile on supported phones, e.g. Pixel 8 Pro); its build setup is not yet studied
 
 ## Phase log
 - 2026-11-07 Phase 3d built: fetch module (YouTube and Spotify single tracks via yt-dlp, provenance table, typed acknowledgement), 17 tests on a fake tool and a fake page; no real network run, review pending.
