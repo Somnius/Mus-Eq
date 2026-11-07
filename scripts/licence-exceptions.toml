@@ -1,0 +1,9 @@
+# Crates that scripts/check-licences.py accepts although their declared licence is not allowed by deny.toml: a crate
+# with no licence field, one whose licence is only in a file, or one somebody has read and decided to accept.
+#
+# The key is name@version, so an upgrade needs another look. Write down who read the licence and what it says.
+# There are none today. Example of an entry:
+#
+# [[exception]]
+# crate = "some-crate@1.2.3"
+# reason = "licence file read on 2026-11-07: MIT; the crate just does not declare it in Cargo.toml"

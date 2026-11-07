@@ -1,0 +1,43 @@
+# cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/).
+#
+# Two tools read this file. scripts/check-licences.py (python3 only, nothing to build) is the blocking licence check
+# that contributors and CI run; cargo-deny, through a pinned prebuilt GitHub Action, gives an independent second opinion
+# on licences, bans and sources. Advisories (known vulnerabilities in dependencies) run in their own non-blocking CI
+# job, because a new advisory upstream would otherwise fail unrelated pushes.
+#
+# The allow list is the set of licences the dependencies declare today (see docs/THIRD_PARTY.md). A dependency under
+# anything else, a GPL crate for example, fails the check and needs a decision before it is added.
+
+[graph]
+all-features = true
+
+[licenses]
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+# check dev and build dependencies too: a test-only crate still lands on every contributor's machine
+include-dev = true
+include-build = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

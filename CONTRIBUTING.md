@@ -10,3 +10,5 @@ It's very early, so the most useful things right now are bug reports, ideas and 
 - Licence: by sending a contribution you agree it is licensed under MIT OR Apache-2.0, the same as the project, with no additional terms.
 - Sign your commits off (`git commit -s`), which adds a `Signed-off-by:` line. It means you wrote the change or have the right to send it, as set out in the Developer Certificate of Origin (https://developercertificate.org/).
 - New source files (Rust, TypeScript, Kotlin, scripts) start with the two SPDX lines the others have; `python3 scripts/add-spdx.py` adds them and CI checks for them.
+- Dependencies: a new crate must be under a licence listed in `deny.toml`. `python3 scripts/check-licences.py` checks this (no extra tool to install); CI also runs cargo-deny as a second opinion. A licence that is not on the list needs a decision first, recorded in `docs/DECISIONS.md`.
+

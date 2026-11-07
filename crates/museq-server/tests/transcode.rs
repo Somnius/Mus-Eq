@@ -232,3 +232,138 @@ async fn only_two_transcodes_run_at_once() {
     }
     assert!(ok, "permits were not released");
 }
+
+/// Scripts that stand in for ffmpeg, written once for all the tests of this file.
+fn fake_ffmpeg(kind: &str) -> PathBuf {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let dir = DIR.get_or_init(|| {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        for (name, body) in [
+            ("fail_at_once", "#!/bin/sh\nexit 1\n"),
+            (
+                "fail_part_way",
+                "#!/bin/sh\nhead -c 65536 /dev/zero\nexit 1\n",
+            ),
+            ("succeed", "#!/bin/sh\nhead -c 1000 /dev/zero\nexit 0\n"),
+            (
+                "close_then_hang",
+                "#!/bin/sh\nhead -c 100 /dev/zero\nexec 1>&-\nsleep 30\n",
+            ),
+        ] {
+            let p = d.path().join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // let any fork that raced with the writes finish before the scripts are run
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        d
+    });
+    dir.path().join(kind)
+}
+
+async fn with_fake(kind: &str) -> (Router, String) {
+    let lib = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dups");
+    let state = api::AppState::new(
+        db::open_in_memory().unwrap(),
+        lib,
+        TOKEN.into(),
+        PathBuf::from("/nonexistent"),
+        None,
+    )
+    .ffmpeg(fake_ffmpeg(kind).to_string_lossy().into_owned());
+    let app = api::router(state);
+    let (_, job) = call(&app, "/v1/jobs", Some(json!({"kind": "scan"}))).await;
+    let uri = format!("/v1/jobs/{}", job.1["id"].as_str().unwrap());
+    for _ in 0..200 {
+        let (_, j) = call(&app, &uri, None).await;
+        if j.1["state"] == "done" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    (app, "1".to_string())
+}
+
+#[tokio::test]
+async fn a_file_ffmpeg_cannot_convert_is_a_502_not_an_empty_200() {
+    let (app, fid) = with_fake("fail_at_once").await;
+    let (status, _, body) = raw(&app, &format!("/v1/audio/{fid}?codec=mp3")).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(String::from_utf8_lossy(&body).contains("could not convert"));
+    assert!(
+        !String::from_utf8_lossy(&body).contains("fixtures"),
+        "the answer must not name file paths"
+    );
+}
+
+#[tokio::test]
+async fn an_ffmpeg_that_dies_part_way_breaks_the_transfer_instead_of_looking_finished() {
+    let (app, fid) = with_fake("fail_part_way").await;
+    let req = Request::builder()
+        .uri(format!("/v1/audio/{fid}?codec=mp3"))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "the answer had already started"
+    );
+    let mut body = resp.into_body();
+    let (mut bytes, mut failed) = (0usize, false);
+    while let Some(frame) = body.frame().await {
+        match frame {
+            Ok(f) => bytes += f.into_data().map(|d| d.len()).unwrap_or(0),
+            Err(_) => {
+                failed = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        bytes >= 65536,
+        "the audio before the failure was delivered ({bytes})"
+    );
+    assert!(failed, "the body must end with an error, not a clean end");
+}
+
+#[tokio::test]
+async fn an_ffmpeg_that_finishes_normally_ends_the_body_cleanly() {
+    let (app, fid) = with_fake("succeed").await;
+    let (status, ct, body) = raw(&app, &format!("/v1/audio/{fid}?codec=mp3")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ct.as_deref(), Some("audio/mpeg"));
+    assert_eq!(body.len(), 1000);
+}
+
+#[tokio::test]
+async fn an_ffmpeg_that_closes_its_output_and_then_hangs_does_not_hold_the_request() {
+    let (app, fid) = with_fake("close_then_hang").await;
+    let req = Request::builder()
+        .uri(format!("/v1/audio/{fid}?codec=mp3"))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mut body = resp.into_body();
+    let started = std::time::Instant::now();
+    let mut failed = false;
+    // the body must end (with an error, since ffmpeg did not exit cleanly) well before the 30 s the script sleeps
+    while let Ok(Some(frame)) =
+        tokio::time::timeout(std::time::Duration::from_secs(15), body.frame()).await
+    {
+        if frame.is_err() {
+            failed = true;
+            break;
+        }
+    }
+    assert!(failed, "the body ended without an error");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(12),
+        "the wait for ffmpeg was not bounded ({:?})",
+        started.elapsed()
+    );
+}

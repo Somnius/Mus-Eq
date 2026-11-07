@@ -8,6 +8,8 @@ cd "$(dirname "$0")/.."
 # keep the machine under its CPU cap: pin to 24 cores when there are that many, always nice
 if [ "$(nproc)" -ge 24 ]; then run() { taskset -c 0-23 nice -n 10 "$@"; }; else run() { nice -n 10 "$@"; }; fi
 python3 scripts/add-spdx.py --check
+python3 scripts/check-licences.py
+python3 -m unittest discover -s scripts
 run cargo fmt --all --check
 run cargo clippy --all-targets -- -D warnings
 run cargo test

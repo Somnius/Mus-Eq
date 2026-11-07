@@ -268,7 +268,7 @@ async fn auth(State(s): State<AppState>, req: Request, next: Next) -> Response {
         .unwrap_or(false);
     // a radio's own listen key opens that radio's stream, and nothing else
     let radio_key = !bearer
-        && req.method() == Method::GET
+        && (req.method() == Method::GET || req.method() == Method::HEAD)
         && radio_stream_id(req.uri().path()).is_some_and(|id| {
             req.uri()
                 .query()
@@ -588,7 +588,8 @@ async fn audio(
                 );
             }
         };
-        return crate::transcode::stream(&s.ffmpeg_path(), &s.root.join(rel), codec, kbps, permit);
+        return crate::transcode::stream(&s.ffmpeg_path(), &s.root.join(rel), codec, kbps, permit)
+            .await;
     }
     // ServeFile answers Range requests, ETag/Last-Modified and the content type.
     match ServeFile::new(s.root.join(rel)).oneshot(req).await {

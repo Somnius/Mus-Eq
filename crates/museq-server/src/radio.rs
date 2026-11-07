@@ -6,7 +6,7 @@ use axum::{
     Json,
     body::Body,
     extract::{Path, State},
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use bytes::Bytes;
@@ -28,7 +28,9 @@ pub struct Hub {
     /// The Ogg header pages (OpusHead, OpusTags) of the track being encoded, for listeners who join mid-track.
     /// This lock is held while a chunk is sent, so a joiner gets either these bytes or the live chunk, never both.
     header: Mutex<Bytes>,
-    now: Mutex<Option<i64>>,             // track id on air
+    now: Mutex<Option<i64>>, // track id on air
+    /// "Artist - Title" of the track on air, cleaned for an ICY block; None if unknown.
+    title: Mutex<Option<String>>,
     stop: std::sync::atomic::AtomicBool, // set when the station is deleted
 }
 
@@ -38,6 +40,73 @@ const MAX_RUNNING: usize = 4;
 const MAX_RADIOS: i64 = 50;
 
 pub type Hubs = Arc<Mutex<HashMap<i64, Arc<Hub>>>>;
+
+/// Audio bytes between two ICY metadata blocks (the value players are told in `icy-metaint`).
+pub const ICY_METAINT: usize = 16_000;
+
+/// "Artist - Title", cleaned so it cannot break an ICY field or an ffmpeg argument.
+pub fn icy_title(t: &transcode::Tags) -> Option<String> {
+    let title = transcode::clean_tag(&t.title, 200);
+    let artist = t
+        .artist
+        .as_deref()
+        .map(|a| transcode::clean_tag(a, 200))
+        .filter(|a| !a.is_empty());
+    match (artist, title.is_empty()) {
+        (Some(a), false) => Some(format!("{a} - {title}")),
+        (Some(a), true) => Some(a),
+        (None, false) => Some(title),
+        (None, true) => None,
+    }
+}
+
+/// One ICY metadata block: a length byte (in units of 16) and `StreamTitle='...';` padded with zeros; a single zero
+/// byte means "no change".
+pub fn icy_block(title: Option<&str>) -> Vec<u8> {
+    let Some(t) = title else { return vec![0] };
+    let text = format!("StreamTitle='{t}';");
+    let blocks = text.len().div_ceil(16);
+    if blocks > 255 {
+        return vec![0];
+    }
+    let mut v = Vec::with_capacity(1 + blocks * 16);
+    v.push(blocks as u8);
+    v.extend_from_slice(text.as_bytes());
+    v.resize(1 + blocks * 16, 0);
+    v
+}
+
+/// Per listener: counts the audio bytes sent and puts a metadata block after every `ICY_METAINT` of them.
+#[derive(Default)]
+pub struct IcyInjector {
+    since: usize,
+    last: Option<String>,
+}
+
+impl IcyInjector {
+    /// `chunk` with metadata blocks inserted at the right offsets. The title is sent when it changes.
+    pub fn inject(&mut self, chunk: &[u8], current: Option<&str>) -> Vec<u8> {
+        let mut out = Vec::with_capacity(chunk.len() + 64);
+        let mut rest = chunk;
+        while !rest.is_empty() {
+            let take = rest.len().min(ICY_METAINT - self.since);
+            out.extend_from_slice(&rest[..take]);
+            self.since += take;
+            rest = &rest[take..];
+            if self.since == ICY_METAINT {
+                self.since = 0;
+                if self.last.as_deref() == current {
+                    out.push(0);
+                } else {
+                    // a title that goes away is sent as an empty one: a zero byte would mean "no change"
+                    out.extend_from_slice(&icy_block(Some(current.unwrap_or(""))));
+                    self.last = current.map(str::to_string);
+                }
+            }
+        }
+        out
+    }
+}
 
 /// Most bytes of header pages that are kept (real ones are a few hundred bytes).
 const MAX_OGG_HEADER: usize = 64 * 1024;
@@ -424,6 +493,21 @@ async fn run_station(s: AppState, id: i64, hub: Arc<Hub>) {
             break;
         };
         *hub.now.lock().unwrap_or_else(|e| e.into_inner()) = Some(*track_id);
+        let tags: Option<transcode::Tags> = {
+            let conn = db::lock(&s.db);
+            conn.query_row(
+                "SELECT title, artist FROM track WHERE id=?1",
+                [*track_id],
+                |r| {
+                    Ok(transcode::Tags {
+                        title: r.get(0)?,
+                        artist: r.get(1)?,
+                    })
+                },
+            )
+            .ok()
+        };
+        *hub.title.lock().unwrap_or_else(|e| e.into_inner()) = tags.as_ref().and_then(icy_title);
         recent.push_back(next);
         while recent.len() > 300 {
             recent.pop_front();
@@ -434,6 +518,12 @@ async fn run_station(s: AppState, id: i64, hub: Arc<Hub>) {
             codec,
             kbps,
             true,
+            // Opus carries its tags in the stream; mp3 and aac get an ICY title instead
+            if matches!(codec, Codec::Opus) {
+                tags.as_ref()
+            } else {
+                None
+            },
         )
         .spawn()
         {
@@ -499,7 +589,29 @@ async fn run_station(s: AppState, id: i64, hub: Arc<Hub>) {
     }
 }
 
-pub async fn stream(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
+/// The headers every radio answer carries (a HEAD request gets the same ones, without a body or an encoder).
+fn radio_headers(resp: &mut Response, codec: Codec, name: &str, icy: bool) {
+    let h = resp.headers_mut();
+    h.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(transcode::mime(codec)),
+    );
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    h.insert(header::ACCEPT_RANGES, HeaderValue::from_static("none"));
+    if let Ok(v) = HeaderValue::from_str(&name.replace(['\r', '\n'], " ")) {
+        h.insert("icy-name", v); // Icecast-style header that players show as the station name
+    }
+    if icy {
+        h.insert("icy-metaint", HeaderValue::from(ICY_METAINT));
+    }
+}
+
+pub async fn stream(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    method: Method,
+    req_headers: HeaderMap,
+) -> Response {
     let info: Option<(String, String)> = {
         let conn = db::lock(&s.db);
         conn.query_row("SELECT name, codec FROM radio WHERE id=?1", [id], |r| {
@@ -513,13 +625,24 @@ pub async fn stream(State(s): State<AppState>, Path(id): Path<i64>) -> Response 
     let Some(codec) = Codec::parse(&codec) else {
         return internal("bad codec");
     };
-    let (rx, start, head) = {
+    // ICY titles only for mp3 and aac (an Ogg stream would be corrupted by inserted bytes), and only when asked
+    let icy = matches!(codec, Codec::Mp3 | Codec::Aac)
+        && req_headers
+            .get("icy-metadata")
+            .is_some_and(|v| v.as_bytes() == b"1");
+    // HEAD: the headers a GET would carry, without joining the station or starting an encoder
+    if method == Method::HEAD {
+        let mut resp = Response::new(Body::empty());
+        radio_headers(&mut resp, codec, &name, icy);
+        return resp;
+    }
+    let (rx, start, head, hub) = {
         let mut hubs = s.radios.lock().unwrap_or_else(|e| e.into_inner());
         match hubs.get(&id) {
             Some(h) => {
                 // subscribe and read the header under the lock chunks are sent under: no gap, no repeat
                 let header = h.header.lock().unwrap_or_else(|e| e.into_inner());
-                (h.tx.subscribe(), None, header.clone())
+                (h.tx.subscribe(), None, header.clone(), h.clone())
             }
             None if hubs.len() >= MAX_RUNNING => {
                 return err(
@@ -533,10 +656,11 @@ pub async fn stream(State(s): State<AppState>, Path(id): Path<i64>) -> Response 
                     tx,
                     header: Mutex::new(Bytes::new()),
                     now: Mutex::new(None),
+                    title: Mutex::new(None),
                     stop: Default::default(),
                 });
                 hubs.insert(id, hub.clone());
-                (rx, Some(hub), Bytes::new())
+                (rx, Some(hub.clone()), Bytes::new(), hub)
             }
         }
     };
@@ -555,17 +679,20 @@ pub async fn stream(State(s): State<AppState>, Path(id): Path<i64>) -> Response 
     // a listener who joins mid-track first gets that track's header pages
     let first =
         futures_util::stream::iter((!head.is_empty()).then(|| Ok::<_, std::io::Error>(head)));
-    let body = Body::from_stream(futures_util::StreamExt::chain(first, live));
+    let body = if icy {
+        // this listener's own byte count decides where the metadata blocks go
+        let mut injector = IcyInjector::default();
+        let live = futures_util::StreamExt::map(live, move |item| {
+            item.map(|b| {
+                let title = hub.title.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                Bytes::from(injector.inject(&b, title.as_deref()))
+            })
+        });
+        Body::from_stream(futures_util::StreamExt::chain(first, live))
+    } else {
+        Body::from_stream(futures_util::StreamExt::chain(first, live))
+    };
     let mut resp = Response::new(body);
-    let h = resp.headers_mut();
-    h.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(transcode::mime(codec)),
-    );
-    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    h.insert(header::ACCEPT_RANGES, HeaderValue::from_static("none"));
-    if let Ok(v) = HeaderValue::from_str(&name.replace(['\r', '\n'], " ")) {
-        h.insert("icy-name", v); // Icecast-style header that players show as the station name
-    }
+    radio_headers(&mut resp, codec, &name, icy);
     resp
 }

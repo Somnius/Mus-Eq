@@ -6,7 +6,7 @@
 Run from the repository root after `npm ci` in web/:  python3 scripts/gen-third-party.py
 The licence strings are what each package declares; this script does not read licence texts.
 """
-import json, subprocess, os, collections
+import json, subprocess, os, sys, collections
 
 meta = json.loads(subprocess.check_output(
     ["cargo", "metadata", "--format-version", "1", "--locked"], text=True))
@@ -57,10 +57,17 @@ for n, v, l in web:
     w(f"| {n} | {v} | {l} |")
 w("\nTransitive npm packages are not listed here. Classic Winamp skins (`.wsz`) are supplied by the user and belong to")
 w("their authors; none are shipped.\n")
-w("## Android app (declared in `android/app/build.gradle.kts`)\n")
-w("AndroidX Media3 (ExoPlayer, session, datasource), AndroidX Core, Guava (through Media3) and Kotlin. These are")
-w("understood to be Apache-2.0 but that was **not** checked against their published metadata; `org.json` and JUnit")
-w("are used only in the unit tests. A Gradle licence report has not been generated yet.\n")
+# the Android list comes from the POM files Gradle has downloaded; without them (no Android build yet) say so
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import android_licences
+    for line in android_licences.section():
+        w(line)
+    w("")
+    w("`org.json` and JUnit are used only in the unit tests and are not part of the app.\n")
+except Exception as e:  # Gradle or its cache is not available here
+    w("## Android app\n")
+    w("The Android dependency list could not be generated here (" + str(e)[:80] + "). Run an Android build, then this script again.\n")
 w("## Other\n")
 w("- **ffmpeg**, **yt-dlp** and **deno** are not shipped, in the repository or in the container image. The server downloads them")
 w("  on request after a typed confirmation, from addresses and SHA-256 values pinned in `crates/museq-server/src/tools.rs`")

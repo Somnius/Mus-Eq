@@ -6,7 +6,10 @@ use axum::{
     http::{Method, Request, StatusCode, header},
 };
 use http_body_util::BodyExt;
-use museq_server::radio::{Cand, CaptureState, OggHeaderCapture, pick_next};
+use museq_server::radio::{
+    Cand, CaptureState, ICY_METAINT, IcyInjector, OggHeaderCapture, icy_block, icy_title, pick_next,
+};
+use museq_server::transcode::Tags;
 use museq_server::{api, db};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -436,16 +439,53 @@ async fn keys_are_random_per_radio_and_can_be_replaced() {
             .0,
         StatusCode::NOT_FOUND
     );
-    // HEAD with a key is refused, and a valid key on a deleted radio opens nothing
-    let head = Request::builder()
-        .method(Method::HEAD)
-        .uri(new.clone())
-        .body(Body::empty())
+    // HEAD with the right key gets the headers and nothing else: no body, and no encoder is started
+    let head = |uri: String, method: Method| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap()
+    };
+    let r = app
+        .clone()
+        .oneshot(head(new.clone(), Method::HEAD))
+        .await
         .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert!(r.into_body().collect().await.unwrap().to_bytes().is_empty());
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (_, list) = call(&app, Method::GET, "/v1/radios", None).await;
+    let mine = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == id.as_str())
+        .unwrap();
+    assert_eq!(mine["listeners"], 0);
+    assert!(
+        mine["now_track_id"].is_null(),
+        "HEAD started a station: {mine}"
+    );
+    // a wrong key, or any method but GET and HEAD, is refused
+    let wrong = new.replace("key=", "key=0");
     assert_eq!(
-        app.clone().oneshot(head).await.unwrap().status(),
+        app.clone()
+            .oneshot(head(wrong, Method::HEAD))
+            .await
+            .unwrap()
+            .status(),
         StatusCode::UNAUTHORIZED
     );
+    assert_ne!(
+        app.clone()
+            .oneshot(head(new.clone(), Method::POST))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    // a valid key on a deleted radio opens nothing
     call(&app, Method::DELETE, &format!("/v1/radios/{id}"), None).await;
     assert_eq!(
         app.clone().oneshot(anon(&new)).await.unwrap().status(),
@@ -724,4 +764,273 @@ async fn joining_an_opus_radio_at_any_moment_still_starts_with_the_header_pages(
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
+}
+
+#[test]
+fn icy_blocks_are_sixteen_byte_units_and_titles_cannot_break_the_field() {
+    assert_eq!(icy_block(None), vec![0], "no title: a single zero byte");
+    let b = icy_block(Some("Artist - Title"));
+    assert_eq!((b.len() - 1) % 16, 0, "padded to a multiple of 16");
+    assert_eq!(b[0] as usize * 16, b.len() - 1);
+    let text = String::from_utf8_lossy(&b[1..])
+        .trim_end_matches('\0')
+        .to_string();
+    assert_eq!(text, "StreamTitle='Artist - Title';");
+
+    // quotes, semicolons and control characters are removed; the result is capped
+    let t = Tags {
+        title: "It's; a \n\u{7}title".into(),
+        artist: Some("A\u{0}rtist".into()),
+    };
+    assert_eq!(icy_title(&t).as_deref(), Some("Artist - Its a title"));
+    let long = Tags {
+        title: "x".repeat(5000),
+        artist: None,
+    };
+    assert!(icy_title(&long).unwrap().chars().count() <= 200);
+    assert!(icy_block(icy_title(&long).as_deref()).len() < 255 * 16);
+    assert_eq!(
+        icy_title(&Tags {
+            title: "  ".into(),
+            artist: None
+        }),
+        None
+    );
+    assert_eq!(
+        icy_title(&Tags {
+            title: "T".into(),
+            artist: Some("A".into())
+        })
+        .as_deref(),
+        Some("A - T")
+    );
+}
+
+#[test]
+fn the_injector_puts_blocks_at_exact_offsets_whatever_the_chunk_sizes() {
+    // the same audio in odd-sized chunks must produce the same bytes
+    let audio: Vec<u8> = (0..(ICY_METAINT * 3 + 123))
+        .map(|i| (i % 251) as u8)
+        .collect();
+    let run = |sizes: &[usize]| {
+        let mut inj = IcyInjector::default();
+        let mut out = Vec::new();
+        let (mut at, mut k) = (0, 0);
+        while at < audio.len() {
+            let n = sizes[k % sizes.len()].min(audio.len() - at);
+            out.extend(inj.inject(&audio[at..at + n], Some("A - T")));
+            at += n;
+            k += 1;
+        }
+        out
+    };
+    let a = run(&[8192]);
+    assert_eq!(a, run(&[1]), "byte by byte");
+    assert_eq!(
+        a,
+        run(&[7, 4000, 15999, 16001, 33]),
+        "odd sizes, also across a boundary"
+    );
+
+    // parse it back: audio, block, audio, block ...
+    let mut pos = 0;
+    let mut got = Vec::new();
+    let mut titles = Vec::new();
+    while pos + ICY_METAINT <= a.len() {
+        got.extend_from_slice(&a[pos..pos + ICY_METAINT]);
+        pos += ICY_METAINT;
+        let len = a[pos] as usize * 16;
+        titles.push(
+            String::from_utf8_lossy(&a[pos + 1..pos + 1 + len])
+                .trim_end_matches('\0')
+                .to_string(),
+        );
+        pos += 1 + len;
+    }
+    got.extend_from_slice(&a[pos..]);
+    assert_eq!(
+        got, audio,
+        "removing the blocks gives back the audio exactly"
+    );
+    assert_eq!(
+        titles,
+        vec![
+            "StreamTitle='A - T';".to_string(),
+            String::new(),
+            String::new()
+        ],
+        "sent once, then 'no change'"
+    );
+}
+
+#[test]
+fn the_injector_sends_a_changed_title_and_forgets_nothing_between_chunks() {
+    let mut inj = IcyInjector::default();
+    let chunk = vec![7u8; ICY_METAINT];
+    let one = inj.inject(&chunk, Some("First"));
+    assert!(String::from_utf8_lossy(&one[ICY_METAINT + 1..]).starts_with("StreamTitle='First';"));
+    let two = inj.inject(&chunk, Some("Second"));
+    assert!(String::from_utf8_lossy(&two[ICY_METAINT + 1..]).starts_with("StreamTitle='Second';"));
+    let three = inj.inject(&chunk, Some("Second"));
+    assert_eq!(three[ICY_METAINT], 0, "unchanged title: one zero byte");
+    let four = inj.inject(&chunk, None);
+    assert!(
+        four[ICY_METAINT] > 0,
+        "no title any more is a change, sent as an empty field or a cleared one"
+    );
+}
+
+async fn first_bytes(mut body: Body, want: usize) -> Vec<u8> {
+    let mut got = Vec::new();
+    while got.len() < want {
+        let f = tokio::time::timeout(Duration::from_secs(10), body.frame())
+            .await
+            .expect("audio arrives")
+            .expect("the stream goes on")
+            .unwrap();
+        if let Ok(d) = f.into_data() {
+            got.extend_from_slice(&d);
+        }
+    }
+    got
+}
+
+async fn make_radio(app: &Router, codec: &str) -> String {
+    let (_, r) = call(
+        app,
+        Method::POST,
+        "/v1/radios",
+        Some(json!({"name": format!("{codec} FM"), "codec": codec, "kbps": 64})),
+    )
+    .await;
+    r["id"].as_str().unwrap().to_string()
+}
+
+fn open_with(
+    app: &Router,
+    id: &str,
+    method: Method,
+    icy: bool,
+) -> impl std::future::Future<Output = axum::response::Response> + use<> {
+    let mut b = Request::builder()
+        .method(method)
+        .uri(format!("/v1/radios/{id}/stream"))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"));
+    if icy {
+        b = b.header("icy-metadata", "1");
+    }
+    let req = b.body(Body::empty()).unwrap();
+    let app = app.clone();
+    async move { app.oneshot(req).await.unwrap() }
+}
+
+fn have_ffmpeg() -> bool {
+    let ok = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_ok();
+    if !ok {
+        assert!(std::env::var_os("CI").is_none(), "ffmpeg is required in CI");
+    }
+    ok
+}
+
+#[tokio::test]
+async fn an_mp3_radio_sends_the_track_title_to_players_that_ask_for_it() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let app = app_with_library().await;
+    let id = make_radio(&app, "mp3").await;
+
+    // asked for: icy-metaint is announced and the blocks sit at exact offsets
+    let resp = open_with(&app, &id, Method::GET, true).await;
+    assert_eq!(
+        resp.headers()["icy-metaint"],
+        ICY_METAINT.to_string().as_str()
+    );
+    let got = first_bytes(resp.into_body(), ICY_METAINT * 2 + 400).await;
+    assert_eq!(
+        &got[..3],
+        b"ID3",
+        "the stream itself starts as mp3 always did"
+    );
+    let len = got[ICY_METAINT] as usize * 16;
+    assert!(len > 0, "the first block carries the title");
+    let text = String::from_utf8_lossy(&got[ICY_METAINT + 1..ICY_METAINT + 1 + len])
+        .trim_end_matches('\0')
+        .to_string();
+    assert!(
+        text.starts_with("StreamTitle='Synth Lab - Noise") && text.ends_with("';"),
+        "{text}"
+    );
+    // the second block, one interval later: still the same title, so one zero byte
+    let second = ICY_METAINT + 1 + len + ICY_METAINT;
+    assert_eq!(got[second], 0, "unchanged title: no change byte");
+
+    // not asked for: nothing announced. This listener joins mid-track, so it gets audio from wherever the
+    // stream is, not the start of a file
+    let plain = open_with(&app, &id, Method::GET, false).await;
+    assert!(plain.headers().get("icy-metaint").is_none());
+    let bytes = first_bytes(plain.into_body(), 300).await;
+    assert!(bytes.len() >= 300);
+}
+
+#[tokio::test]
+async fn an_opus_radio_is_never_given_icy_blocks_but_carries_the_title_in_its_own_tags() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let app = app_with_library().await;
+    let id = make_radio(&app, "opus").await;
+    let resp = open_with(&app, &id, Method::GET, true).await;
+    assert!(
+        resp.headers().get("icy-metaint").is_none(),
+        "inserting bytes would corrupt an Ogg stream"
+    );
+    let got = first_bytes(resp.into_body(), 400).await;
+    assert_eq!(&got[..4], b"OggS");
+    assert_eq!(&got[28..36], b"OpusHead");
+    let tags = String::from_utf8_lossy(&got[..400]).to_lowercase();
+    assert!(
+        tags.contains("title=noise"),
+        "the OpusTags page names the track: {tags:?}"
+    );
+    assert!(
+        tags.contains("artist=synth lab"),
+        "and its artist: {tags:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_head_request_does_not_join_the_station_or_start_an_encoder() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let app = app_with_library().await;
+    let id = make_radio(&app, "mp3").await;
+    let resp = open_with(&app, &id, Method::HEAD, true).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()[header::CONTENT_TYPE], "audio/mpeg");
+    assert_eq!(resp.headers()["icy-name"], "mp3 FM");
+    assert_eq!(
+        resp.headers()["icy-metaint"],
+        ICY_METAINT.to_string().as_str()
+    );
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty(), "no body for HEAD");
+    // give an encoder time to start if one wrongly did
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let (_, list) = call(&app, Method::GET, "/v1/radios", None).await;
+    let mine = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == id.as_str())
+        .unwrap();
+    assert_eq!(mine["listeners"], 0);
+    assert!(
+        mine["now_track_id"].is_null(),
+        "no track is on air: nothing started: {mine}"
+    );
 }
