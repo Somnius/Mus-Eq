@@ -10,7 +10,6 @@ use axum::{
 use bytes::Bytes;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
@@ -25,6 +24,11 @@ pub struct Hub {
     tx: broadcast::Sender<Bytes>,
     now: Mutex<Option<i64>>, // track id on air
 }
+
+/// At most this many stations encode at the same time (each is one ffmpeg process).
+const MAX_RUNNING: usize = 4;
+/// At most this many stations can be defined.
+const MAX_RADIOS: i64 = 50;
 
 pub type Hubs = Arc<Mutex<HashMap<i64, Arc<Hub>>>>;
 
@@ -156,6 +160,12 @@ pub async fn add_radio(State(s): State<AppState>, Json(b): Json<NewRadio>) -> Re
     if !(0..=200).contains(&gap) {
         return err(StatusCode::BAD_REQUEST, "artist_gap must be 0 to 200");
     }
+    let count: i64 = db::lock(&s.db)
+        .query_row("SELECT COUNT(*) FROM radio", [], |r| r.get(0))
+        .unwrap_or(0);
+    if count >= MAX_RADIOS {
+        return err(StatusCode::CONFLICT, "too many radios defined");
+    }
     let genre = b.genre.as_deref().map(str::trim).filter(|g| !g.is_empty());
     let id = {
         let conn = db::lock(&s.db);
@@ -221,8 +231,16 @@ async fn run_station(s: AppState, id: i64, hub: Arc<Hub>) {
     let mut recent: VecDeque<Cand> = VecDeque::new();
     let mut failures = 0;
     loop {
-        if hub.tx.receiver_count() == 0 {
-            break;
+        {
+            // decide "nobody listens" and remove the hub under the lock listeners subscribe under,
+            // so a listener can never join a station that is shutting down
+            let mut hubs = s.radios.lock().unwrap_or_else(|e| e.into_inner());
+            if hub.tx.receiver_count() == 0 {
+                if hubs.get(&id).is_some_and(|h| Arc::ptr_eq(h, &hub)) {
+                    hubs.remove(&id);
+                }
+                return;
+            }
         }
         let station: Option<(Option<String>, i64, String, i64)> = {
             let conn = db::lock(&s.db);
@@ -305,6 +323,12 @@ pub async fn stream(State(s): State<AppState>, Path(id): Path<i64>) -> Response 
         let mut hubs = s.radios.lock().unwrap_or_else(|e| e.into_inner());
         match hubs.get(&id) {
             Some(h) => (h.tx.subscribe(), None),
+            None if hubs.len() >= MAX_RUNNING => {
+                return err(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "too many radios are on air",
+                );
+            }
             None => {
                 let (tx, rx) = broadcast::channel(64);
                 let hub = Arc::new(Hub {
@@ -339,6 +363,5 @@ pub async fn stream(State(s): State<AppState>, Path(id): Path<i64>) -> Response 
     if let Ok(v) = HeaderValue::from_str(&name.replace(['\r', '\n'], " ")) {
         h.insert("icy-name", v); // Icecast-style header that players show as the station name
     }
-    let _ = json!(null);
     resp
 }

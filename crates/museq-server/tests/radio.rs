@@ -201,6 +201,30 @@ async fn listeners_share_one_encoder_that_stops_when_they_leave() {
     assert_eq!(one.headers()[header::CONTENT_TYPE], "audio/mpeg");
     assert_eq!(one.headers()["icy-name"], "Test FM");
     let two = open().await.unwrap();
+    let (_, list) = call(&app, Method::GET, "/v1/radios", None).await;
+    assert_eq!(
+        list[0]["listeners"], 2,
+        "two listeners on one station: {list}"
+    );
+    let mut on_air = false;
+    for _ in 0..40 {
+        let (_, l) = call(&app, Method::GET, "/v1/radios", None).await;
+        if !l[0]["now_track_id"].is_null() {
+            on_air = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(on_air, "a track is reported on air");
+    // no token, no stream
+    let anon = Request::builder()
+        .uri(format!("/v1/radios/{id}/stream"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(anon).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
     // both hear audio
     for resp in [one, two] {
         let mut body = resp.into_body();
