@@ -1,0 +1,9 @@
+Mus-Eq
+Copyright 2026 Lef
+
+This product includes the Greek radio station list from Tray-FM
+(https://github.com/Constantinos/Tray-FM) by Constantinos, released under the
+Unlicense, copied to data/stations/trayfm-stations.txt.
+
+Third-party software that Mus-Eq builds on is listed, with its licences, in
+docs/THIRD_PARTY.md.

@@ -10,5 +10,4 @@
 | Q10 | Commercial use someday? (AcoustID free tier is non-commercial) | no | phase 3 |
 | Q12 | Tag writes: in place, or corrections only in SQLite until accepted? | SQLite first | phase 3 |
 | Q13 | Desktop shell: Tauri/`wry` around Webamp, or Qt Quick? macOS builds wanted. | browser first | phase 4 |
-| Q14 | Which licence for the repo? | none (all rights reserved) | public use |
 | Q15 | Now-playing titles for external stations (ICY metadata): keep pure passthrough and read titles through a short-lived side connection, or relay the stream for the owner? | passthrough + side connection | phase 5 |
