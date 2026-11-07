@@ -52,4 +52,25 @@ class ParseTest {
         f.writeText("abc")
         assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", sha256Hex(f))
     }
+
+    private fun toolJson(phase: String, message: String) = """
+        {"name":"ffmpeg","purpose":"to convert tracks","version":"n8.1.3","licence":"LGPL","homepage":"x","notes":"",
+         "platform_supported":true,"source_url":"https://github.com/a","download_bytes":135188284,"sha256":"ab",
+         "found":"missing","path":null,"message":$message,"confirm_phrase":"install ffmpeg n8.1.3",
+         "progress":{"phase":"$phase","downloaded":50,"total":200,"error":null}}"""
+
+    @Test fun toolInfoKeepsTheConfirmationPhraseAndProgress() {
+        val t = Parse.tool(JSONObject(toolJson("downloading", "\"Mus-Eq needs ffmpeg. Confirm by sending: install ffmpeg n8.1.3\"")))
+        assertEquals("install ffmpeg n8.1.3", t.confirmPhrase)
+        assertTrue(t.message!!.contains("Confirm by sending"))
+        assertTrue(t.busy); assertEquals(25, t.percent); assertNull(t.error)
+        val idle = Parse.tool(JSONObject(toolJson("idle", "null")))
+        assertFalse(idle.busy); assertNull(idle.message)
+    }
+
+    @Test fun serverErrorTextIsReadOrFallsBack() {
+        assertEquals("not confirmed. Mus-Eq needs ffmpeg", Parse.errorText("""{"error":"not confirmed. Mus-Eq needs ffmpeg"}""", "HTTP 400"))
+        assertEquals("HTTP 502", Parse.errorText("<html>bad gateway</html>", "HTTP 502"))
+        assertEquals("HTTP 400", Parse.errorText("", "HTTP 400"))
+    }
 }

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# SPDX-FileCopyrightText: 2026 Lef
 """Adds (or with --check, verifies) the SPDX header on every tracked source file.
 
     python3 scripts/add-spdx.py          add the header where it is missing

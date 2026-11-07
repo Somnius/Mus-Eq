@@ -25,6 +25,9 @@ use crate::transcode::{self, Codec};
 /// What one running station shares between its encoder task and its listeners.
 pub struct Hub {
     tx: broadcast::Sender<Bytes>,
+    /// The Ogg header pages (OpusHead, OpusTags) of the track being encoded, for listeners who join mid-track.
+    /// This lock is held while a chunk is sent, so a joiner gets either these bytes or the live chunk, never both.
+    header: Mutex<Bytes>,
     now: Mutex<Option<i64>>,             // track id on air
     stop: std::sync::atomic::AtomicBool, // set when the station is deleted
 }
@@ -35,6 +38,101 @@ const MAX_RUNNING: usize = 4;
 const MAX_RADIOS: i64 = 50;
 
 pub type Hubs = Arc<Mutex<HashMap<i64, Arc<Hub>>>>;
+
+/// Most bytes of header pages that are kept (real ones are a few hundred bytes).
+const MAX_OGG_HEADER: usize = 64 * 1024;
+
+/// Reads the start of an Ogg stream page by page and keeps the leading header pages: everything before the first
+/// page that carries audio (a granule position above zero). A player that joins an Ogg/Opus stream in the middle
+/// needs those pages to know what it is decoding.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CaptureState {
+    /// Still reading header pages.
+    #[default]
+    Capturing,
+    /// The first audio page was seen and the header was handed over.
+    Done,
+    /// Not Ogg, out of step or too big: nothing is kept.
+    Failed,
+}
+
+#[derive(Default)]
+pub struct OggHeaderCapture {
+    buf: Vec<u8>,
+    pages: Vec<u8>,
+    state: CaptureState,
+}
+
+impl OggHeaderCapture {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn state(&self) -> CaptureState {
+        self.state
+    }
+
+    /// Everything of the stream seen so far (header pages plus a partly received page). Until the first audio
+    /// page arrives all of it is header, so a listener who joins now gets exactly what one at the start gets.
+    pub fn pending(&self) -> Bytes {
+        let mut all = Vec::with_capacity(self.pages.len() + self.buf.len());
+        all.extend_from_slice(&self.pages);
+        all.extend_from_slice(&self.buf);
+        Bytes::from(all)
+    }
+
+    fn fail(&mut self) {
+        self.state = CaptureState::Failed;
+        self.buf = Vec::new();
+        self.pages = Vec::new();
+    }
+
+    /// Feeds the next bytes of the stream. Returns the header pages once, when the first audio page is seen.
+    /// Returns None for anything else, including a stream that does not look like Ogg (nothing is kept then).
+    pub fn feed(&mut self, data: &[u8]) -> Option<Bytes> {
+        if self.state != CaptureState::Capturing {
+            return None;
+        }
+        self.buf.extend_from_slice(data);
+        loop {
+            if self.buf.len() < 27 {
+                return None;
+            }
+            if &self.buf[..4] != b"OggS" {
+                self.fail(); // not Ogg, or out of step: stop looking
+                return None;
+            }
+            let segs = self.buf[26] as usize;
+            let head_len = 27 + segs;
+            if self.buf.len() < head_len {
+                return None;
+            }
+            let body: usize = self.buf[27..head_len].iter().map(|&b| b as usize).sum();
+            let total = head_len + body;
+            if self.buf.len() < total {
+                // an enormous page is not a header
+                if total > MAX_OGG_HEADER {
+                    self.fail();
+                }
+                return None;
+            }
+            let granule = i64::from_le_bytes(self.buf[6..14].try_into().expect("8 bytes"));
+            if granule > 0 {
+                self.state = CaptureState::Done;
+                let header = std::mem::take(&mut self.pages);
+                self.buf = Vec::new();
+                return (!header.is_empty()).then(|| Bytes::from(header));
+            }
+            // granule 0 (OpusHead, OpusTags) or -1 (a packet that continues on the next page): still header
+            self.pages.extend_from_slice(&self.buf[..total]);
+            self.buf.drain(..total);
+            if self.pages.len() > MAX_OGG_HEADER {
+                self.fail();
+                return None;
+            }
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Cand {
@@ -345,6 +443,9 @@ async fn run_station(s: AppState, id: i64, hub: Arc<Hub>) {
         let mut out = child.stdout.take().expect("piped");
         let mut buf = vec![0u8; 8 * 1024];
         let mut sent = 0usize;
+        // Opus comes as an Ogg stream: remember this track's header pages for listeners who join later
+        let mut capture = matches!(codec, Codec::Opus).then(OggHeaderCapture::new);
+        *hub.header.lock().unwrap_or_else(|e| e.into_inner()) = Bytes::new();
         let started = std::time::Instant::now();
         loop {
             if hub.stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -354,13 +455,27 @@ async fn run_station(s: AppState, id: i64, hub: Arc<Hub>) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     sent += n;
+                    // the send and the header update happen under one lock (see Hub::header)
+                    let mut header = hub.header.lock().unwrap_or_else(|e| e.into_inner());
                     // an error here means nobody is listening any more
                     if hub.tx.send(Bytes::copy_from_slice(&buf[..n])).is_err() {
                         break;
                     }
+                    let done = capture.as_mut().and_then(|c| c.feed(&buf[..n]));
+                    if let Some(c) = capture.as_ref() {
+                        match (done, c.state()) {
+                            (Some(found), _) => *header = found,
+                            // still in the header: a joiner gets everything so far, as if it had joined at the start
+                            (None, CaptureState::Capturing) => *header = c.pending(),
+                            (None, CaptureState::Failed) => *header = Bytes::new(),
+                            (None, CaptureState::Done) => {}
+                        }
+                    }
                 }
             }
         }
+        // this track's header must not be offered to listeners who join before the next track starts
+        *hub.header.lock().unwrap_or_else(|e| e.into_inner()) = Bytes::new();
         let _ = child.kill().await;
         // a file that produced nothing (corrupt, vanished) is skipped; many in a row end the station
         if hub.stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -398,10 +513,14 @@ pub async fn stream(State(s): State<AppState>, Path(id): Path<i64>) -> Response 
     let Some(codec) = Codec::parse(&codec) else {
         return internal("bad codec");
     };
-    let (rx, start) = {
+    let (rx, start, head) = {
         let mut hubs = s.radios.lock().unwrap_or_else(|e| e.into_inner());
         match hubs.get(&id) {
-            Some(h) => (h.tx.subscribe(), None),
+            Some(h) => {
+                // subscribe and read the header under the lock chunks are sent under: no gap, no repeat
+                let header = h.header.lock().unwrap_or_else(|e| e.into_inner());
+                (h.tx.subscribe(), None, header.clone())
+            }
             None if hubs.len() >= MAX_RUNNING => {
                 return err(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -412,18 +531,19 @@ pub async fn stream(State(s): State<AppState>, Path(id): Path<i64>) -> Response 
                 let (tx, rx) = broadcast::channel(64);
                 let hub = Arc::new(Hub {
                     tx,
+                    header: Mutex::new(Bytes::new()),
                     now: Mutex::new(None),
                     stop: Default::default(),
                 });
                 hubs.insert(id, hub.clone());
-                (rx, Some(hub))
+                (rx, Some(hub), Bytes::new())
             }
         }
     };
     if let Some(hub) = start {
         tokio::spawn(run_station(s.clone(), id, hub));
     }
-    let body = Body::from_stream(futures_util::stream::unfold(rx, |mut rx| async move {
+    let live = futures_util::stream::unfold(rx, |mut rx| async move {
         loop {
             match rx.recv().await {
                 Ok(b) => return Some((Ok::<_, std::io::Error>(b), rx)),
@@ -431,7 +551,11 @@ pub async fn stream(State(s): State<AppState>, Path(id): Path<i64>) -> Response 
                 Err(broadcast::error::RecvError::Closed) => return None,
             }
         }
-    }));
+    });
+    // a listener who joins mid-track first gets that track's header pages
+    let first =
+        futures_util::stream::iter((!head.is_empty()).then(|| Ok::<_, std::io::Error>(head)));
+    let body = Body::from_stream(futures_util::StreamExt::chain(first, live));
     let mut resp = Response::new(body);
     let h = resp.headers_mut();
     h.insert(

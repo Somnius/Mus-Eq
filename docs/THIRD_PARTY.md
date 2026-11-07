@@ -7,33 +7,33 @@ package's own LICENSE file before relying on a line here.
 
 ## Rust crates (everything in `Cargo.lock`, including build and test tools)
 
-262 packages. By declared licence:
+272 packages. By declared licence:
 
-- 131 x `MIT OR Apache-2.0`
-- 41 x `MIT`
+- 134 x `MIT OR Apache-2.0`
+- 44 x `MIT`
 - 18 x `Unicode-3.0`
 - 16 x `MPL-2.0`
-- 11 x `Apache-2.0 OR MIT`
+- 13 x `Apache-2.0 OR MIT`
 - 9 x `MIT/Apache-2.0`
 - 5 x `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT`
 - 3 x `Unlicense OR MIT`
 - 3 x `Apache-2.0 OR ISC OR MIT`
 - 3 x `BSD-3-Clause`
 - 2 x `Zlib OR Apache-2.0 OR MIT`
+- 2 x `Zlib`
 - 2 x `MIT OR Apache-2.0 OR LGPL-2.1-or-later`
 - 2 x `ISC`
 - 2 x `Unlicense/MIT`
+- 2 x `Apache-2.0`
 - 2 x `(MIT OR Apache-2.0) AND Unicode-3.0`
 - 2 x `BSD-2-Clause OR Apache-2.0 OR MIT`
 - 1 x `ISC AND (Apache-2.0 OR ISC)`
 - 1 x `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)`
 - 1 x `CC0-1.0 OR MIT-0 OR Apache-2.0`
-- 1 x `Zlib`
 - 1 x `MIT OR Apache-2.0 OR Zlib`
 - 1 x `MIT AND BSD-3-Clause`
 - 1 x `Apache-2.0 AND ISC`
 - 1 x `Apache-2.0 OR BSL-1.0`
-- 1 x `Apache-2.0`
 - 1 x `CDLA-Permissive-2.0`
 
 Notes:
@@ -46,7 +46,7 @@ Notes:
   bundles some LGPL-2.1 FFmpeg code; the port uses the `rustfft` and `rubato` crates instead, and its source never
   mentions FFmpeg. That is evidence, not a legal conclusion.
 - **libopus** is compiled from source by the `opus` crate. Its licence (BSD-3-Clause upstream) was not re-checked here.
-- **lzma-sys** (used by `xz2` to unpack the downloaded `.tar.xz`) compiles the C source of the xz/liblzma library into the
+- **zip** (unpacks the downloaded deno `.zip`) and **lzma-sys** (used by `xz2` to unpack the downloaded `.tar.xz`) compiles the C source of the xz/liblzma library into the
   server. That library's own licence (public domain or 0BSD upstream) was not checked here.
 - Two crates offer `MIT OR Apache-2.0 OR LGPL-2.1-or-later`; Mus-Eq takes the MIT or Apache-2.0 option.
 
@@ -80,6 +80,7 @@ Notes:
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 |
+| crc32fast | 1.5.4 | MIT OR Apache-2.0 |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
 | data-encoding | 2.11.1 | MIT |
@@ -87,6 +88,7 @@ Notes:
 | digest | 0.11.3 | MIT OR Apache-2.0 |
 | displaydoc | 0.2.7 | MIT OR Apache-2.0 |
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
+| equivalent | 1.0.3 | Apache-2.0 OR MIT |
 | errno | 0.3.14 | MIT OR Apache-2.0 |
 | extended | 0.1.0 | MIT |
 | fallible-iterator | 0.3.0 | MIT/Apache-2.0 |
@@ -94,6 +96,7 @@ Notes:
 | fastrand | 2.5.0 | Apache-2.0 OR MIT |
 | filetime | 0.2.29 | MIT/Apache-2.0 |
 | find-msvc-tools | 0.1.15 | MIT OR Apache-2.0 |
+| flate2 | 1.1.11 | MIT OR Apache-2.0 |
 | foldhash | 0.2.0 | Zlib |
 | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 |
 | fs_extra | 1.3.0 | MIT |
@@ -129,6 +132,7 @@ Notes:
 | icu_provider | 2.4.0 | Unicode-3.0 |
 | idna | 1.1.0 | MIT OR Apache-2.0 |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT |
+| indexmap | 2.14.2 | Apache-2.0 OR MIT |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 |
 | itoa | 1.0.18 | MIT OR Apache-2.0 |
 | jni | 0.22.4 | MIT OR Apache-2.0 |
@@ -150,6 +154,7 @@ Notes:
 | mime | 0.3.18 | MIT OR Apache-2.0 |
 | mime_guess | 2.0.5 | MIT |
 | mio | 1.2.4 | MIT |
+| nix | 0.31.3 | MIT |
 | num-complex | 0.4.6 | MIT OR Apache-2.0 |
 | num-integer | 0.1.47 | MIT OR Apache-2.0 |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 |
@@ -213,6 +218,7 @@ Notes:
 | sha2 | 0.11.1 | MIT OR Apache-2.0 |
 | shlex | 2.0.1 | MIT OR Apache-2.0 |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 |
+| simd-adler32 | 0.3.10 | MIT |
 | simd_cesu8 | 1.2.0 | Apache-2.0 OR MIT |
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
 | slab | 0.4.12 | MIT |
@@ -265,6 +271,7 @@ Notes:
 | try-lock | 0.2.5 | MIT |
 | tungstenite | 0.29.0 | MIT OR Apache-2.0 |
 | tungstenite | 0.30.0 | MIT OR Apache-2.0 |
+| typed-path | 0.13.0 | MIT OR Apache-2.0 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 |
 | unicase | 2.10.0 | MIT OR Apache-2.0 |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |
@@ -315,7 +322,10 @@ Notes:
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.9 | Unicode-3.0 |
 | zerovec-derive | 0.11.7 | Unicode-3.0 |
+| zip | 9.4.1 | MIT |
+| zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |
+| zopfli | 0.8.4 | Apache-2.0 |
 
 </details>
 
@@ -339,7 +349,7 @@ are used only in the unit tests. A Gradle licence report has not been generated 
 
 ## Other
 
-- **ffmpeg** and **yt-dlp** are not shipped, in the repository or in the container image. The server downloads them
+- **ffmpeg**, **yt-dlp** and **deno** are not shipped, in the repository or in the container image. The server downloads them
   on request after a typed confirmation, from addresses and SHA-256 values pinned in `crates/museq-server/src/tools.rs`
   (see "Programs Mus-Eq downloads" in the README). They run as separate programs, not linked into Mus-Eq.
   - ffmpeg n8.1.3: a build by the BtbN project (`autobuild-2026-10-31-12-59`, the `lgpl` variant). It is configured
@@ -347,5 +357,7 @@ are used only in the unit tests. A Gradle licence report has not been generated 
     FFmpeg's published rules and was only partly checked against ffmpeg.org/legal.html.
   - yt-dlp 2026.10.26: Unlicense. The single-file Linux build also bundles Python and other components under their
     own licences, which have not been reviewed here.
+  - deno 2.9.8: MIT (checked in the project's LICENSE.md). yt-dlp's own documentation says it needs a JavaScript
+    runtime for full YouTube support and recommends deno; Mus-Eq downloads deno on request and points yt-dlp at it.
   - Whoever downloads them receives them under those licences; Mus-Eq does not redistribute them.
 - **Radio station list**: Tray-FM by Constantinos (Unlicense), `data/stations/trayfm-stations.txt`.

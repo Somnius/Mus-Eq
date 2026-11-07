@@ -24,6 +24,8 @@ pub enum Archive {
     Raw,
     /// A `.tar.xz`; the program is the entry whose path ends with `member` (for example `/bin/ffmpeg`).
     TarXz { member: String },
+    /// A `.zip`; the program is the entry named exactly `member`.
+    Zip { member: String },
 }
 
 /// One pinned download for one platform.
@@ -679,6 +681,38 @@ fn unpack(download: &Path, out: &Path, archive: &Archive) -> Result<(), String> 
                 return Err(format!("the archive has no {member}"));
             }
         }
+        Archive::Zip { member } => {
+            let src = std::fs::File::open(download)
+                .map_err(|e| format!("cannot read the download: {e}"))?;
+            let mut zip =
+                zip::ZipArchive::new(src).map_err(|e| format!("cannot read the archive: {e}"))?;
+            // two members with the same name would make "which one" a guess: refuse
+            let same = (0..zip.len())
+                .filter(|&i| matches!(zip.name_for_index(i), Some(Ok(n)) if n == member.as_str()))
+                .count();
+            if same > 1 {
+                return Err(format!(
+                    "the archive has {same} entries named {member}; refused"
+                ));
+            }
+            let entry = zip
+                .by_name(member)
+                .map_err(|_| format!("the archive has no {member}"))?;
+            // a plain file only: not a directory, not a symlink
+            let symlink = entry.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000);
+            if !entry.is_file() || symlink {
+                return Err(format!("{member} in the archive is not a plain file"));
+            }
+            if entry.size() > MAX_BINARY {
+                return Err("the program inside the archive is larger than allowed".into());
+            }
+            let mut limited = entry.take(MAX_BINARY + 1);
+            let n = std::io::copy(&mut limited, &mut dest)
+                .map_err(|e| format!("cannot write the program: {e}"))?;
+            if n > MAX_BINARY {
+                return Err("the program inside the archive is larger than allowed".into());
+            }
+        }
     }
     drop(dest);
     #[cfg(unix)]
@@ -789,6 +823,16 @@ pub fn builtin_specs() -> Vec<ToolSpec> {
         bytes,
         archive: Archive::Raw,
     };
+    let deno_asset = |arch: &str, sha: &str, bytes: u64| Asset {
+        os: s("linux"),
+        arch: s(arch),
+        url: format!(
+            "https://github.com/denoland/deno/releases/download/v2.9.8/deno-{arch}-unknown-linux-gnu.zip"
+        ),
+        sha256: s(sha),
+        bytes,
+        archive: Archive::Zip { member: s("deno") },
+    };
     vec![
         ToolSpec {
             name: s("ffmpeg"),
@@ -837,7 +881,7 @@ pub fn builtin_specs() -> Vec<ToolSpec> {
             extra_checks: vec![],
             hosts: vec![s("github.com"), s("githubusercontent.com")],
             notes: s(
-                "Downloading from a streaming service may break that service's terms; that is your responsibility.",
+                "Downloading from a streaming service may break that service's terms; that is your responsibility. For YouTube it also needs a JavaScript runtime, which is why deno is offered next.",
             ),
             assets: vec![
                 ytdlp_asset(
@@ -851,6 +895,35 @@ pub fn builtin_specs() -> Vec<ToolSpec> {
                     "yt-dlp_linux_aarch64",
                     "e87e9533e89fe5889abaa21f5114dfe7756d6aa6219b83551add04d48b18e483",
                     40_789_792,
+                ),
+            ],
+        },
+        ToolSpec {
+            name: s("deno"),
+            purpose: s(
+                "to let yt-dlp run the JavaScript checks YouTube needs (only the fetch feature uses it)",
+            ),
+            version: s("2.9.8"),
+            licence: s("MIT"),
+            homepage: s("https://deno.com"),
+            binary: s("deno"),
+            check_args: vec![s("--version")],
+            check_prefix: s("deno 2.9.8 "),
+            extra_checks: vec![],
+            hosts: vec![s("github.com"), s("githubusercontent.com")],
+            notes: s(
+                "Mus-Eq tells yt-dlp where this copy is; a deno already on the server's PATH also works.",
+            ),
+            assets: vec![
+                deno_asset(
+                    "x86_64",
+                    "e890975bc2549807bbcc0b584ffafda72cc7c93349dd99c80483dd784f6c4609",
+                    41_963_064,
+                ),
+                deno_asset(
+                    "aarch64",
+                    "d49596c20b9788cf8f5d8ddf644103d4bde56ed239753f0bdb92ba9361d51905",
+                    40_120_596,
                 ),
             ],
         },

@@ -887,3 +887,226 @@ async fn fetch_uses_the_installed_yt_dlp_and_says_plainly_when_there_is_none() {
     let p = state.ytdlp_path().expect("the installed yt-dlp is found");
     assert!(p.starts_with(&d) && p.ends_with("yt-dlp"));
 }
+
+/// A zip holding one file with the given name and script text.
+fn zip_with(member: &str, script: &str) -> Vec<u8> {
+    use std::io::Write;
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
+    w.start_file(member, opts).unwrap();
+    w.write_all(script.as_bytes()).unwrap();
+    w.finish().unwrap().into_inner()
+}
+
+#[tokio::test]
+async fn a_zip_download_is_unpacked_by_exact_name_and_checked() {
+    let good = zip_with("faketool", GOOD_SCRIPT);
+    let g = good.clone();
+    let nested = zip_with("sub/faketool", GOOD_SCRIPT);
+    let n = nested.clone();
+    let base = serve(
+        Router::new()
+            .route(
+                "/good.zip",
+                get(move || {
+                    let a = g.clone();
+                    async move { a }
+                }),
+            )
+            .route(
+                "/nested.zip",
+                get(move || {
+                    let a = n.clone();
+                    async move { a }
+                }),
+            ),
+    )
+    .await;
+
+    let (_keep, d) = dir();
+    let app1 = app(Tools::new(
+        d.clone(),
+        vec![spec(
+            &base,
+            "/good.zip",
+            &good,
+            Archive::Zip {
+                member: "faketool".into(),
+            },
+        )],
+    )
+    .insecure_for_tests());
+    call(
+        &app1,
+        Method::POST,
+        &format!("/v1/tools/{NAME}/install"),
+        true,
+        Some(json!({"confirm": "install faketool t1"})),
+    )
+    .await;
+    let t = wait_finished(&app1).await;
+    assert_eq!(t["progress"]["phase"], "done", "{t}");
+    let out = std::process::Command::new(t["path"].as_str().unwrap())
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("faketool version t1"));
+
+    // the right hash but the program is not at the top level of the zip: refused, nothing left
+    let (_keep2, d2) = dir();
+    let app2 = app(Tools::new(
+        d2.clone(),
+        vec![spec(
+            &base,
+            "/nested.zip",
+            &nested,
+            Archive::Zip {
+                member: "faketool".into(),
+            },
+        )],
+    )
+    .insecure_for_tests());
+    call(
+        &app2,
+        Method::POST,
+        &format!("/v1/tools/{NAME}/install"),
+        true,
+        Some(json!({"confirm": "install faketool t1"})),
+    )
+    .await;
+    let t = wait_finished(&app2).await;
+    assert_eq!(t["progress"]["phase"], "failed", "{t}");
+    assert!(
+        t["progress"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("has no faketool"),
+        "{t}"
+    );
+    no_leftovers(&d2);
+}
+
+#[tokio::test]
+async fn yt_dlp_is_pointed_at_the_installed_deno_and_only_then() {
+    let script = "#!/bin/sh\necho \"deno 2.9.8 (test)\"\n";
+    let archive = zip_with("deno", script);
+    let a = archive.clone();
+    let base = serve(Router::new().route(
+        "/deno.zip",
+        get(move || {
+            let a = a.clone();
+            async move { a }
+        }),
+    ))
+    .await;
+    let (_keep, d) = dir();
+    let mut sp = spec(
+        &base,
+        "/deno.zip",
+        &archive,
+        Archive::Zip {
+            member: "deno".into(),
+        },
+    );
+    sp.name = "deno".into();
+    sp.binary = "deno".into();
+    sp.check_prefix = "deno ".into();
+    let tools = Arc::new(Tools::new(d.clone(), vec![sp]).insecure_for_tests());
+    let state = api::AppState::new(
+        db::open_in_memory().unwrap(),
+        std::env::temp_dir(),
+        TOKEN.into(),
+        std::env::temp_dir().join("museq-test-skins-tools"),
+        None,
+    )
+    .tools_shared(tools.clone());
+    assert!(
+        museq_server::fetch::js_runtime_args(&state).is_empty(),
+        "no deno installed: yt-dlp finds its own runtime"
+    );
+
+    let app = api::router(state.clone());
+    let (s, _) = call(
+        &app,
+        Method::POST,
+        "/v1/tools/deno/install",
+        true,
+        Some(json!({"confirm": "install deno t1"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    for _ in 0..200 {
+        if state.deno_path().is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let args = museq_server::fetch::js_runtime_args(&state);
+    assert_eq!(args.len(), 2);
+    assert_eq!(args[0], "--js-runtimes");
+    assert!(
+        args[1].starts_with("deno:")
+            && args[1].ends_with("/deno")
+            && args[1].contains(d.to_str().unwrap()),
+        "{args:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_explicitly_chosen_yt_dlp_gets_no_js_runtime_flag() {
+    let script = "#!/bin/sh\necho \"deno 2.9.8 (test)\"\n";
+    let archive = zip_with("deno", script);
+    let a = archive.clone();
+    let base = serve(Router::new().route(
+        "/deno.zip",
+        get(move || {
+            let a = a.clone();
+            async move { a }
+        }),
+    ))
+    .await;
+    let (_keep, d) = dir();
+    let mut sp = spec(
+        &base,
+        "/deno.zip",
+        &archive,
+        Archive::Zip {
+            member: "deno".into(),
+        },
+    );
+    sp.name = "deno".into();
+    sp.binary = "deno".into();
+    sp.check_prefix = "deno ".into();
+    let tools = Arc::new(Tools::new(d, vec![sp]).insecure_for_tests());
+    // the owner chose their own yt-dlp (it may be older and not know the option)
+    let state = api::AppState::new(
+        db::open_in_memory().unwrap(),
+        std::env::temp_dir(),
+        TOKEN.into(),
+        std::env::temp_dir().join("museq-test-skins-tools"),
+        None,
+    )
+    .fetch(museq_server::fetch::FetchConfig {
+        enabled: true,
+        ytdlp: PathBuf::from("/opt/their/yt-dlp"),
+        ..Default::default()
+    })
+    .tools_shared(tools);
+    let app = api::router(state.clone());
+    call(
+        &app,
+        Method::POST,
+        "/v1/tools/deno/install",
+        true,
+        Some(json!({"confirm": "install deno t1"})),
+    )
+    .await;
+    for _ in 0..200 {
+        if state.deno_path().is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(state.deno_path().is_some(), "deno is installed");
+    assert!(museq_server::fetch::js_runtime_args(&state).is_empty());
+}

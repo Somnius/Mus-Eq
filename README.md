@@ -82,13 +82,14 @@ This has been tested only against a fake `yt-dlp` and a fake Spotify page. No re
 
 ## Programs Mus-Eq downloads
 
-Mus-Eq does not include ffmpeg or yt-dlp, and the container image does not either. They are separate programs under their own licences, and the server fetches one only when you ask for it and confirm.
+Mus-Eq does not include ffmpeg, yt-dlp or deno, and the container image does not either. They are separate programs under their own licences, and the server fetches one only when you ask for it and confirm.
 
 - `GET /v1/tools` lists them. For each it says what it is for, the exact address and host, the size, the pinned SHA-256, its licence, whether the server already found one, and a ready-to-show message.
 - `POST /v1/tools/ffmpeg/install` with `{"confirm": "install ffmpeg n8.1.3"}` starts the download. Without that exact phrase nothing is downloaded and the answer is the same message. `GET /v1/tools` shows progress; `DELETE /v1/tools/ffmpeg` removes it. The server enforces the phrase; showing the message to a person is the client's job (the web client shows it before its confirm button).
 - The download must come from the pinned address over HTTPS (redirects may only go to GitHub's own download hosts), must match the SHA-256 pinned in this release, and must run and identify itself (for ffmpeg, also list the encoders Mus-Eq uses), or nothing is installed. An installed file that is later replaced no longer matches its install record and is not used. A download that takes too long is stopped. The files go in `MUSEQ_TOOLS_DIR` (default: a `tools` folder next to the database, `/data/tools` in the container). The folder must belong to the user the server runs as; if Mus-Eq creates it, it is made private (mode 700), and a folder you point to keeps its permissions.
 - A program you already have is used as before and needs no download: set `MUSEQ_FFMPEG` to its path, or have `ffmpeg` on `PATH`. `MUSEQ_TOOLS_DOWNLOADS=off` forbids downloads altogether.
-- This release pins ffmpeg n8.1.3 (a BtbN LGPL build, which has what Mus-Eq uses: libopus, libmp3lame and the native AAC encoder) and yt-dlp 2026.10.26, for Linux on x86_64 and aarch64. Other systems install the programs themselves. The builds need glibc, so Alpine and Termux are not covered. Pins are updated by new Mus-Eq releases, and the upstream project may remove an old build, in which case the install fails with a clear message.
+- This release pins ffmpeg n8.1.3 (a BtbN LGPL build, which has what Mus-Eq uses: libopus, libmp3lame and the native AAC encoder), yt-dlp 2026.10.26 and deno 2.9.8, for Linux on x86_64 and aarch64. Other systems install the programs themselves. The builds need glibc, so Alpine and Termux are not covered. Pins are updated by new Mus-Eq releases, and the upstream project may remove an old build, in which case the install fails with a clear message.
+- deno is a JavaScript runtime. yt-dlp's own documentation says it needs one for full YouTube support (deno is the one it recommends and enables by default). If you install deno here, the server tells yt-dlp where it is (`--js-runtimes deno:<path>`); without it, yt-dlp looks for a runtime itself, for example a deno on the server's `PATH`. Only the fetch feature uses it.
 - Installing yt-dlp does not turn on the fetch feature, which stays off until you set it up (see above). Once fetch is on, it uses the installed yt-dlp unless `MUSEQ_FETCH_YTDLP` names another; it never looks for yt-dlp on `PATH`.
 
 ## Android app
@@ -147,6 +148,6 @@ Mus-Eq is licensed under either of
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 
-at your option. Third-party software and its licences are listed in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
+at your option. Third-party software and its licences are listed in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md); the licence questions we could not settle ourselves are in [docs/LEGAL-REVIEW.md](docs/LEGAL-REVIEW.md).
 
 Unless you say otherwise, a contribution you send is licensed as above, with no extra terms. See [CONTRIBUTING.md](CONTRIBUTING.md).

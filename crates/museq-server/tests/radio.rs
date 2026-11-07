@@ -6,7 +6,7 @@ use axum::{
     http::{Method, Request, StatusCode, header},
 };
 use http_body_util::BodyExt;
-use museq_server::radio::{Cand, pick_next};
+use museq_server::radio::{Cand, CaptureState, OggHeaderCapture, pick_next};
 use museq_server::{api, db};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -451,4 +451,277 @@ async fn keys_are_random_per_radio_and_can_be_replaced() {
         app.clone().oneshot(anon(&new)).await.unwrap().status(),
         StatusCode::UNAUTHORIZED
     );
+}
+
+/// One Ogg page with a body of at most 254 bytes (a single lacing value); the checksum is not needed here.
+fn ogg_page(granule: i64, seq: u32, body: &[u8]) -> Vec<u8> {
+    assert!(body.len() < 255);
+    let mut p = b"OggS".to_vec();
+    p.push(0); // version
+    p.push(0); // header type
+    p.extend_from_slice(&granule.to_le_bytes());
+    p.extend_from_slice(&7u32.to_le_bytes()); // stream serial
+    p.extend_from_slice(&seq.to_le_bytes());
+    p.extend_from_slice(&[0, 0, 0, 0]); // crc
+    p.push(1); // one segment
+    p.push(body.len() as u8);
+    p.extend_from_slice(body);
+    p
+}
+
+fn opus_stream() -> (Vec<u8>, Vec<u8>) {
+    let head = ogg_page(0, 0, b"OpusHead\x01\x02");
+    let tags = ogg_page(0, 1, b"OpusTagsvendor");
+    let audio1 = ogg_page(960, 2, &[1u8; 40]);
+    let audio2 = ogg_page(1920, 3, &[2u8; 40]);
+    let header = [head.clone(), tags.clone()].concat();
+    let all = [head, tags, audio1, audio2].concat();
+    (header, all)
+}
+
+#[test]
+fn ogg_capture_keeps_the_pages_before_the_first_audio_page() {
+    let (header, all) = opus_stream();
+    let mut c = OggHeaderCapture::new();
+    assert_eq!(c.feed(&all).as_deref(), Some(header.as_slice()));
+    assert!(c.feed(&all).is_none(), "the header is reported once");
+
+    // the same when the bytes arrive one at a time
+    let mut c = OggHeaderCapture::new();
+    let mut found = Vec::new();
+    for b in &all {
+        if let Some(h) = c.feed(&[*b]) {
+            found.push(h);
+        }
+    }
+    assert_eq!(found.len(), 1);
+    assert_eq!(&found[0][..], header.as_slice());
+
+    // nothing is reported until an audio page has been seen
+    let mut c = OggHeaderCapture::new();
+    assert!(c.feed(&all[..header.len() + 10]).is_none());
+}
+
+#[test]
+fn ogg_capture_counts_continuation_pages_as_header_and_ignores_other_data() {
+    // granule -1: a packet that goes on in the next page, still header
+    let a = ogg_page(0, 0, b"OpusHead\x01\x02");
+    let b = ogg_page(-1, 1, b"OpusTags...");
+    let c2 = ogg_page(0, 2, b"...end");
+    let audio = ogg_page(960, 3, &[9u8; 30]);
+    let header = [a.clone(), b.clone(), c2.clone()].concat();
+    let mut cap = OggHeaderCapture::new();
+    assert_eq!(
+        cap.feed(&[header.clone(), audio].concat()).as_deref(),
+        Some(header.as_slice())
+    );
+
+    // not Ogg at all (an mp3 stream, say): nothing is kept, and it never panics
+    let mut cap = OggHeaderCapture::new();
+    assert!(cap.feed(&b"ID3".repeat(40)).is_none());
+    assert!(
+        cap.feed(&opus_stream().1).is_none(),
+        "once out of step it stops looking"
+    );
+
+    // header pages that never end are not kept without limit
+    let mut cap = OggHeaderCapture::new();
+    let big = ogg_page(0, 0, &[0u8; 250]);
+    let mut kept = None;
+    for _ in 0..400 {
+        kept = kept.or(cap.feed(&big));
+    }
+    assert!(kept.is_none());
+    assert!(cap.feed(&ogg_page(960, 1, &[1u8; 10])).is_none());
+}
+
+#[tokio::test]
+async fn a_listener_who_joins_an_opus_radio_mid_track_gets_the_header_pages_first() {
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_err()
+    {
+        assert!(std::env::var_os("CI").is_none(), "ffmpeg is required in CI");
+        return;
+    }
+    let app = app_with_library().await;
+    let (_, r) = call(
+        &app,
+        Method::POST,
+        "/v1/radios",
+        Some(json!({"name": "Opus FM", "codec": "opus", "kbps": 64})),
+    )
+    .await;
+    let id = r["id"].as_str().unwrap().to_string();
+    let open = || {
+        let req = Request::builder()
+            .uri(format!("/v1/radios/{id}/stream"))
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .body(Body::empty())
+            .unwrap();
+        app.clone().oneshot(req)
+    };
+    let first = open().await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(first.headers()[header::CONTENT_TYPE], "audio/ogg");
+
+    // the first listener hears the track from its start: it begins with the header pages
+    let mut a = first.into_body();
+    let mut heard = Vec::new();
+    let started = std::time::Instant::now();
+    while heard.len() < 12_000 && started.elapsed() < Duration::from_secs(15) {
+        if let Some(Ok(f)) = tokio::time::timeout(Duration::from_secs(5), a.frame())
+            .await
+            .expect("audio arrives")
+            && let Ok(d) = f.into_data()
+        {
+            heard.extend_from_slice(&d);
+        }
+    }
+    assert!(heard.len() >= 12_000, "the first listener got audio");
+    assert_eq!(&heard[..4], b"OggS");
+    assert_eq!(&heard[28..36], b"OpusHead");
+
+    // a second listener joins now, well into the track: it must start with the same header pages
+    let mut b = open().await.unwrap().into_body();
+    let mut got = Vec::new();
+    while got.len() < 400 {
+        let f = tokio::time::timeout(Duration::from_secs(5), b.frame())
+            .await
+            .expect("audio arrives")
+            .expect("the stream goes on")
+            .unwrap();
+        if let Ok(d) = f.into_data() {
+            got.extend_from_slice(&d);
+        }
+    }
+    assert_eq!(&got[..4], b"OggS", "a joiner starts on a page boundary");
+    assert_eq!(
+        &got[28..36],
+        b"OpusHead",
+        "the first page is the stream header"
+    );
+    assert_eq!(
+        &got[75..83],
+        b"OpusTags",
+        "the second page is the comment header"
+    );
+}
+
+#[test]
+fn ogg_capture_reports_everything_so_far_while_the_header_is_still_arriving() {
+    let (header, all) = opus_stream();
+    let first_len = ogg_page(0, 0, b"OpusHead\x01\x02").len();
+    let mut c = OggHeaderCapture::new();
+    assert!(c.pending().is_empty());
+
+    // only the first page so far: a listener who joins now must get that page, and the rest live
+    assert!(c.feed(&all[..first_len]).is_none());
+    assert_eq!(c.state(), CaptureState::Capturing);
+    assert_eq!(&c.pending()[..], &all[..first_len]);
+
+    // half of the second page: still everything received, including the part page
+    assert!(c.feed(&all[first_len..first_len + 10]).is_none());
+    assert_eq!(&c.pending()[..], &all[..first_len + 10]);
+
+    // the rest of the header and the first audio page: the header alone is handed over, and the state is final
+    let done = c.feed(&all[first_len + 10..]).expect("header found");
+    assert_eq!(&done[..], header.as_slice());
+    assert_eq!(c.state(), CaptureState::Done);
+    assert!(c.feed(&all).is_none());
+}
+
+#[test]
+fn ogg_capture_forgets_everything_when_it_gives_up() {
+    let mut c = OggHeaderCapture::new();
+    assert!(c.feed(&b"ID3".repeat(20)).is_none());
+    assert_eq!(c.state(), CaptureState::Failed);
+    assert!(c.pending().is_empty(), "nothing is kept after a failure");
+
+    // an enormous header never ends: it fails and frees what it held
+    let mut c = OggHeaderCapture::new();
+    let big = ogg_page(0, 0, &[0u8; 250]);
+    for _ in 0..400 {
+        c.feed(&big);
+    }
+    assert_eq!(c.state(), CaptureState::Failed);
+    assert!(c.pending().is_empty());
+}
+
+#[tokio::test]
+async fn joining_an_opus_radio_at_any_moment_still_starts_with_the_header_pages() {
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_err()
+    {
+        assert!(std::env::var_os("CI").is_none(), "ffmpeg is required in CI");
+        return;
+    }
+    let app = app_with_library().await;
+    // The second listener joins at different moments after the station starts, including the first instants, when
+    // the header pages have been sent but the first audio page has not been seen yet.
+    for (round, delay_ms) in [0u64, 40, 120, 300].into_iter().enumerate() {
+        let (_, r) = call(
+            &app,
+            Method::POST,
+            "/v1/radios",
+            Some(json!({"name": format!("Join {round}"), "codec": "opus", "kbps": 64})),
+        )
+        .await;
+        let id = r["id"].as_str().unwrap().to_string();
+        let open = || {
+            let req = Request::builder()
+                .uri(format!("/v1/radios/{id}/stream"))
+                .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+                .body(Body::empty())
+                .unwrap();
+            app.clone().oneshot(req)
+        };
+        let first = open().await.unwrap().into_body();
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        let mut second = open().await.unwrap().into_body();
+        let mut got = Vec::new();
+        while got.len() < 120 {
+            let f = tokio::time::timeout(Duration::from_secs(8), second.frame())
+                .await
+                .expect("audio arrives")
+                .expect("the stream goes on")
+                .unwrap();
+            if let Ok(d) = f.into_data() {
+                got.extend_from_slice(&d);
+            }
+        }
+        assert_eq!(
+            &got[..4],
+            b"OggS",
+            "joined after {delay_ms} ms: starts on a page"
+        );
+        assert_eq!(
+            &got[28..36],
+            b"OpusHead",
+            "joined after {delay_ms} ms: first page is the stream header"
+        );
+        assert_eq!(
+            &got[75..83],
+            b"OpusTags",
+            "joined after {delay_ms} ms: second page is the comment header"
+        );
+        drop((first, second));
+        // wait for this station to go quiet so the next round has a free encoder slot
+        for _ in 0..80 {
+            let (_, list) = call(&app, Method::GET, "/v1/radios", None).await;
+            let mine = list
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["id"] == id.as_str())
+                .unwrap();
+            if mine["listeners"] == 0 && mine["now_track_id"].is_null() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
 }

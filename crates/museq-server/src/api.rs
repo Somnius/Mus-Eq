@@ -116,6 +116,11 @@ impl AppState {
         self.tools.installed_binary("yt-dlp")
     }
 
+    /// The deno that Mus-Eq installed, if any; yt-dlp is told where it is.
+    pub fn deno_path(&self) -> Option<PathBuf> {
+        self.tools.installed_binary("deno")
+    }
+
     /// The ffmpeg to run: the configured one, else the installed one, else `ffmpeg` from PATH.
     pub fn ffmpeg_path(&self) -> String {
         self.tools.resolve("ffmpeg")

@@ -159,7 +159,7 @@ check(dead.status === 201 && byName["Smoke Test FM"]?.alive === true && byName["
 
 // Programs panel: both tools are listed, and the full download message is on the page before anything is downloaded.
 const toolRows = await page.$$eval("#tools-list li.tool", (els) => els.map((e) => e.dataset.tool));
-check(toolRows.includes("ffmpeg") && toolRows.includes("yt-dlp"), `the Programs panel lists ffmpeg and yt-dlp (${toolRows.join(", ")})`);
+check(["ffmpeg", "yt-dlp", "deno"].every((n) => toolRows.includes(n)), `the Programs panel lists ffmpeg, yt-dlp and deno (${toolRows.join(", ")})`);
 const toolList = await (await fetch(`${base}/v1/tools`, { headers: auth })).json();
 const ff = toolList.find((t) => t.name === "ffmpeg");
 check(ff && ff.confirm_phrase.startsWith("install ffmpeg ") && (ff.message === null || /Nothing is downloaded until you confirm/.test(ff.message)), "the tools API carries the confirmation phrase and message");

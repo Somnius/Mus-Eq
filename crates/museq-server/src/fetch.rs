@@ -399,12 +399,26 @@ struct Run {
 
 /// Run yt-dlp without a shell, in its own process group, with a deadline (the whole group is
 /// killed on timeout). Output is capped.
+/// Options that point yt-dlp at the deno Mus-Eq installed. Only added for the yt-dlp Mus-Eq installed (the pinned
+/// release knows the option); a yt-dlp the owner chose with `MUSEQ_FETCH_YTDLP` may be older and reject it, so it is
+/// left to find a runtime itself (for example a deno on the server's PATH).
+pub fn js_runtime_args(app: &AppState) -> Vec<String> {
+    if !app.fetch.ytdlp.as_os_str().is_empty() {
+        return Vec::new();
+    }
+    match app.deno_path() {
+        Some(p) => vec!["--js-runtimes".into(), format!("deno:{}", p.display())],
+        None => Vec::new(),
+    }
+}
+
 async fn run_ytdlp(app: &AppState, args: &[String]) -> Result<Run, String> {
     let Some(ytdlp) = app.ytdlp_path() else {
         return Err("yt-dlp is not installed: install it from the Programs panel (GET /v1/tools), or set MUSEQ_FETCH_YTDLP".into());
     };
     let mut cmd = tokio::process::Command::new(ytdlp);
-    cmd.args(args)
+    cmd.args(js_runtime_args(app))
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

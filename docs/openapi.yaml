@@ -195,7 +195,7 @@ paths:
     get:
       tags: [system]
       operationId: listTools
-      summary: The external programs Mus-Eq can use (ffmpeg, yt-dlp), whether one was found, and what installing each would download
+      summary: The external programs Mus-Eq can use (ffmpeg, yt-dlp, deno), whether one was found, and what installing each would download
       responses:
         "200":
           description: Tools with the confirmation message a client shows before installing
@@ -211,7 +211,7 @@ paths:
       operationId: installTool
       summary: Download and install a pinned tool in the background. Nothing is downloaded unless `confirm` is exactly the phrase from `GET /v1/tools`.
       parameters:
-        - { name: name, in: path, required: true, schema: { type: string, enum: [ffmpeg, yt-dlp] } }
+        - { name: name, in: path, required: true, schema: { type: string, enum: [ffmpeg, yt-dlp, deno] } }
       requestBody:
         required: true
         content:
@@ -238,7 +238,7 @@ paths:
       operationId: removeTool
       summary: Remove a tool Mus-Eq installed (a program you configured is never touched)
       parameters:
-        - { name: name, in: path, required: true, schema: { type: string, enum: [ffmpeg, yt-dlp] } }
+        - { name: name, in: path, required: true, schema: { type: string, enum: [ffmpeg, yt-dlp, deno] } }
       responses:
         "204": { description: Removed }
         "401": { $ref: "#/components/responses/Unauthorized" }

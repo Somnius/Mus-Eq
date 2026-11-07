@@ -24,6 +24,22 @@ object Api {
         } finally { cn.disconnect() }
     }
 
+    /** POST or DELETE with an optional JSON body. Returns the HTTP status and the body text; never throws for a 4xx/5xx. */
+    fun send(c: Context, method: String, path: String, body: String? = null): Pair<Int, String> {
+        val cn = URL(Prefs.base(c) + path).openConnection() as HttpURLConnection
+        try {
+            cn.requestMethod = method
+            cn.instanceFollowRedirects = false
+            cn.setRequestProperty("Authorization", "Bearer " + Prefs.token(c))
+            cn.setRequestProperty("Content-Type", "application/json")
+            cn.connectTimeout = 8000; cn.readTimeout = 30000
+            if (body != null) { cn.doOutput = true; cn.outputStream.use { it.write(body.toByteArray()) } }
+            val code = cn.responseCode
+            val text = (if (code in 200..299) cn.inputStream else cn.errorStream)?.bufferedReader()?.readText() ?: ""
+            return code to text
+        } finally { cn.disconnect() }
+    }
+
     fun obj(c: Context, path: String) = JSONObject(text(c, path))
     fun arr(c: Context, path: String) = JSONArray(text(c, path))
 

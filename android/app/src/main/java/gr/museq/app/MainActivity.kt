@@ -17,6 +17,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import org.json.JSONObject
 import kotlin.concurrent.thread
 
 /** One line of the list: what it says, what a tap does, what a long press does. */
@@ -69,7 +70,7 @@ class MainActivity : Activity() {
         battery = Button(this)
         battery.setOnClickListener { allowBackground() }
         val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf("library" to "Library", "lists" to "Lists", "radio" to "Radio", "stations" to "Stations", "pinned" to "Pinned")
+        listOf("library" to "Library", "lists" to "Lists", "radio" to "Radio", "stations" to "Stations", "pinned" to "Pinned", "tools" to "Tools")
             .forEach { (v, name) -> tabs.addView(Button(this).apply {
                 text = name; isAllCaps = false; setPadding(4, 0, 4, 0)
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -120,6 +121,7 @@ class MainActivity : Activity() {
             "radio" -> radios()
             "stations" -> stations(query.text.toString())
             "pinned" -> pinned()
+            "tools" -> tools()
         }
     }
 
@@ -269,6 +271,75 @@ class MainActivity : Activity() {
                 status.text = "$ok identical, $fixed re-downloaded, $failed failed, ${missing.size} no longer on the server" +
                     (if (fixed > 0) " (a track that is playing keeps its old copy until it starts again)" else "")
             }
+        }
+    }
+
+    // ---- programs the server can download (ffmpeg, yt-dlp) ---------------------------------------
+
+    private fun tools() {
+        val app = applicationContext
+        gen++ // a new call replaces any polling chain that is still running
+        val g = gen
+        background("loading programs…") {
+            val list = Parse.tools(Api.arr(app, "/v1/tools"))
+            ui {
+                if (g != gen) return@ui
+                status.text = "Programs the server can download; tap one to see what would be downloaded"
+                showRows(list.map { t -> Row(toolLabel(t), { toolTapped(t) }) })
+            }
+            // keep the progress current while something downloads
+            if (list.any { it.busy }) { Thread.sleep(1500); ui { if (g == gen && view == "tools") tools() } }
+        }
+    }
+
+    private fun toolLabel(t: ToolInfo): String {
+        val state = when {
+            t.busy -> "${t.phase}${if (t.phase == "downloading") " ${t.percent}%" else "…"}"
+            t.found == "installed" -> "installed by Mus-Eq"
+            t.found == "modified" -> "installed copy was changed, so it is not used"
+            t.found == "configured" -> "using the program you configured"
+            t.found == "system" -> "found on the server"
+            t.phase == "failed" -> "not installed (last try failed: ${t.error})"
+            else -> "not installed"
+        }
+        return "${t.name} ${t.version} · $state"
+    }
+
+    private fun toolTapped(t: ToolInfo) {
+        if (t.busy) return
+        val b = android.app.AlertDialog.Builder(this)
+        if (t.found == "installed" || t.found == "modified") {
+            b.setTitle("Remove ${t.name}?")
+                .setMessage("This removes the copy Mus-Eq installed on the server. The server can download it again later.")
+                .setPositiveButton("Remove") { _, _ -> removeTool(t) }
+        } else if (t.found == "missing" && t.supported && t.message != null) {
+            // the whole message is shown first; the confirmation phrase is sent only by this button
+            b.setTitle("Download ${t.name}?")
+                .setMessage(t.message)
+                .setPositiveButton("Download and install") { _, _ -> installTool(t) }
+        } else {
+            b.setTitle(t.name).setMessage(
+                if (!t.supported) "This release has no download for the server's system. Install it yourself and set its environment variable (for example MUSEQ_FFMPEG)."
+                else "The server already has ${t.name} (${t.found}); nothing to download.")
+        }
+        b.setNegativeButton("Close", null).show()
+    }
+
+    private fun installTool(t: ToolInfo) {
+        val app = applicationContext
+        background("starting the download…") {
+            val (code, body) = Api.send(app, "POST", "/v1/tools/${Api.enc(t.name)}/install", JSONObject().put("confirm", t.confirmPhrase).toString())
+            if (code != 202) throw RuntimeException(Parse.errorText(body, "HTTP $code"))
+            ui { if (view == "tools") tools() }
+        }
+    }
+
+    private fun removeTool(t: ToolInfo) {
+        val app = applicationContext
+        background("removing ${t.name}…") {
+            val (code, body) = Api.send(app, "DELETE", "/v1/tools/${Api.enc(t.name)}")
+            if (code != 204) throw RuntimeException(Parse.errorText(body, "HTTP $code"))
+            ui { if (view == "tools") tools() }
         }
     }
 

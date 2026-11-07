@@ -11,6 +11,16 @@ class Track(val id: String, val title: String, val artist: String, val fileId: S
 /** One track as the server's manifest describes it: the details plus size and SHA-256 of the file that plays. */
 class Entry(val track: Track, val bytes: Long, val sha256: String)
 
+/** One program Mus-Eq can download, as `GET /v1/tools` describes it. */
+class ToolInfo(
+    val name: String, val version: String, val purpose: String, val found: String, val message: String?,
+    val confirmPhrase: String, val supported: Boolean, val phase: String, val downloaded: Long, val total: Long,
+    val error: String?,
+) {
+    val busy get() = phase in setOf("downloading", "verifying", "unpacking", "checking")
+    val percent get() = if (total > 0) (100 * downloaded / total).toInt() else 0
+}
+
 /** Parsing of what the server sends. Kept free of Android classes so it can be unit tested. */
 object Parse {
     fun track(o: JSONObject) = Track(
@@ -26,6 +36,23 @@ object Parse {
         val m = j.getJSONArray("missing")
         return items to (0 until m.length()).map { m.getString(it) }
     }
+
+    fun tool(o: JSONObject): ToolInfo {
+        val p = o.getJSONObject("progress")
+        return ToolInfo(
+            o.getString("name"), o.getString("version"), o.getString("purpose"), o.getString("found"),
+            if (o.isNull("message")) null else o.getString("message"),
+            o.getString("confirm_phrase"), o.getBoolean("platform_supported"),
+            p.getString("phase"), p.optLong("downloaded", 0), p.optLong("total", 0),
+            if (p.isNull("error")) null else p.getString("error"),
+        )
+    }
+
+    fun tools(a: org.json.JSONArray): List<ToolInfo> = (0 until a.length()).map { tool(a.getJSONObject(it)) }
+
+    /** The `error` text of a server error body, or `fallback` if the body is not that shape. */
+    fun errorText(body: String, fallback: String): String =
+        try { JSONObject(body).getString("error") } catch (e: Exception) { fallback }
 
     private val range = Regex("bytes (\\d+)-(\\d+)/(\\d+|\\*)")
     private val unsatisfied = Regex("bytes \\*/(\\d+)")
