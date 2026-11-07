@@ -209,7 +209,7 @@ paths:
     get:
       tags: [library]
       operationId: getAudio
-      summary: Stream a file by file id (supports HTTP Range). codec/kbps are not implemented before phase 5 (501).
+      summary: Stream a file by file id (supports HTTP Range). With codec (and optional kbps, default 96 opus / 192 mp3 / 128 aac) the file is re-encoded by ffmpeg on the fly, without Range support; at most two at once.
       parameters:
         - name: file_id
           in: path
@@ -229,8 +229,12 @@ paths:
               schema: { type: string, format: binary }
         "206":
           description: Partial content
+        "400":
+          description: Unknown codec, kbps without codec, or kbps outside 32 to 320
         "501":
-          description: codec/kbps requested before transcoding exists
+          description: Transcoding requested but ffmpeg could not be started
+        "503":
+          description: Two transcodes are already running
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

@@ -19,6 +19,7 @@ COPY crates ./crates
 RUN cargo build --release -p museq-server
 
 FROM debian:stable-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/target/release/museq-server /usr/local/bin/museq-server
 COPY --from=web /web/dist /usr/share/museq/web
 COPY data/stations /usr/share/museq/stations

@@ -38,6 +38,10 @@ pub struct AppState {
     pub services: Arc<crate::metadata::Services>,
     pub limiters: Arc<crate::metadata::Limiters>,
     pub fetch: Arc<crate::fetch::FetchConfig>,
+    /// ffmpeg for transcoding (`MUSEQ_FFMPEG`, default `ffmpeg` from PATH).
+    pub ffmpeg: Arc<String>,
+    /// At most this many transcodes at once.
+    pub transcodes: Arc<tokio::sync::Semaphore>,
 }
 
 const COOKIE_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
@@ -68,7 +72,14 @@ impl AppState {
             services: Arc::new(crate::metadata::Services::default()),
             limiters: Arc::new(crate::metadata::Limiters::default()),
             fetch: Arc::new(crate::fetch::FetchConfig::default()),
+            ffmpeg: Arc::new("ffmpeg".into()),
+            transcodes: Arc::new(tokio::sync::Semaphore::new(2)),
         }
+    }
+
+    pub fn ffmpeg(mut self, path: String) -> Self {
+        self.ffmpeg = Arc::new(path);
+        self
     }
 
     pub fn fetch(mut self, cfg: crate::fetch::FetchConfig) -> Self {
@@ -392,12 +403,20 @@ async fn audio(
     Query(q): Query<AudioQuery>,
     req: Request,
 ) -> Response {
-    if q.codec.is_some() || q.kbps.is_some() {
-        return err(
-            StatusCode::NOT_IMPLEMENTED,
-            "transcoding is not available yet",
-        );
-    }
+    let wanted = match (q.codec.as_deref(), q.kbps) {
+        (None, None) => None,
+        (None, Some(_)) => return err(StatusCode::BAD_REQUEST, "kbps needs a codec"),
+        (Some(c), k) => {
+            let Some(codec) = crate::transcode::Codec::parse(c) else {
+                return err(StatusCode::BAD_REQUEST, "codec must be opus, mp3 or aac");
+            };
+            let kbps = k.unwrap_or(codec.default_kbps());
+            if !(32..=320).contains(&kbps) {
+                return err(StatusCode::BAD_REQUEST, "kbps must be 32 to 320");
+            }
+            Some((codec, kbps))
+        }
+    };
     let rel: Option<String> = {
         let conn = crate::db::lock(&s.db);
         match conn
@@ -411,6 +430,18 @@ async fn audio(
     let Some(rel) = rel else {
         return err(StatusCode::NOT_FOUND, "no such file");
     };
+    if let Some((codec, kbps)) = wanted {
+        let permit = match s.transcodes.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                return err(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "too many transcodes running, try again",
+                );
+            }
+        };
+        return crate::transcode::stream(&s.ffmpeg, &s.root.join(rel), codec, kbps, permit);
+    }
     // ServeFile answers Range requests, ETag/Last-Modified and the content type.
     match ServeFile::new(s.root.join(rel)).oneshot(req).await {
         Ok(resp) => resp.into_response(),
