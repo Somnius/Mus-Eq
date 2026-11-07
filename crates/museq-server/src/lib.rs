@@ -2,6 +2,7 @@ pub mod api;
 pub mod config;
 pub mod db;
 pub mod duplicates;
+pub mod extend;
 pub mod fingerprint;
 pub mod metadata;
 pub mod scan;

@@ -100,6 +100,10 @@ pub fn router(state: AppState) -> Router {
             get(get_playlist).delete(delete_playlist),
         )
         .route("/v1/playlists/{id}/items", post(add_item).put(set_items))
+        .route(
+            "/v1/playlists/{id}/extend",
+            post(crate::extend::extend_playlist),
+        )
         .route("/v1/logout", post(logout))
         .route("/v1/jobs", post(create_job))
         .route("/v1/jobs/{id}", get(get_job))
