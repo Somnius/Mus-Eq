@@ -208,6 +208,20 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
              CREATE INDEX provenance_video ON provenance(video_id);",
         )?;
     }
+    if version < 9 {
+        step(
+            &conn,
+            9,
+            "CREATE TABLE radio(
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               name TEXT NOT NULL,
+               genre TEXT,
+               artist_gap INTEGER NOT NULL DEFAULT 5,
+               codec TEXT NOT NULL DEFAULT 'mp3',
+               kbps INTEGER NOT NULL DEFAULT 128
+             );",
+        )?;
+    }
     // A job left "running" by a crash will never finish.
     conn.execute("UPDATE job SET state='failed', error='interrupted by restart' WHERE state IN ('queued','running')", [])?;
     Ok(conn)
@@ -276,7 +290,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         // data carried across, the new columns filled in, the new tables there
         let (track_id, mtime): (Option<i64>, i64) = conn
             .query_row("SELECT track_id, mtime FROM file WHERE id=7", [], |r| {

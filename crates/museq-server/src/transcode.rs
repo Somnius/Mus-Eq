@@ -40,6 +40,38 @@ impl Codec {
     }
 }
 
+/// The ffmpeg command that re-encodes `path` to stdout. `realtime` (`-re`) paces the output like
+/// a live source, which is what a radio station needs.
+pub fn command(
+    ffmpeg: &str,
+    path: &Path,
+    codec: Codec,
+    kbps: i64,
+    realtime: bool,
+) -> tokio::process::Command {
+    let (enc, container, _) = codec.args();
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut cmd = tokio::process::Command::new(ffmpeg);
+    cmd.args(["-nostdin", "-v", "error", "-protocol_whitelist", "file"]);
+    if realtime {
+        cmd.arg("-re");
+    }
+    cmd.arg("-i")
+        .arg(format!("file:{}", path.display()))
+        .args(["-vn", "-map_metadata", "-1", "-c:a", enc, "-b:a"])
+        .arg(format!("{kbps}k"))
+        .args(["-f", container, "pipe:1"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    cmd
+}
+
+pub fn mime(codec: Codec) -> &'static str {
+    codec.args().2
+}
+
 /// Stream `path` re-encoded. The file path is passed as one argument after `-i`; a leading `-`
 /// is neutralised by making the path absolute first.
 pub fn stream<G: Send + 'static>(
@@ -49,25 +81,8 @@ pub fn stream<G: Send + 'static>(
     kbps: i64,
     guard: G,
 ) -> Response {
-    let (enc, container, mime) = codec.args();
-    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    let mut cmd = tokio::process::Command::new(ffmpeg);
-    cmd.args([
-        "-nostdin",
-        "-v",
-        "error",
-        "-protocol_whitelist",
-        "file",
-        "-i",
-    ])
-    .arg(format!("file:{}", path.display()))
-    .args(["-vn", "-map_metadata", "-1", "-c:a", enc, "-b:a"])
-    .arg(format!("{kbps}k"))
-    .args(["-f", container, "pipe:1"])
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::null())
-    .kill_on_drop(true);
+    let (_, _, mime) = codec.args();
+    let mut cmd = command(ffmpeg, path, codec, kbps, false);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(_) => {

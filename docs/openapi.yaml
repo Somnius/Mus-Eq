@@ -205,6 +205,44 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Track" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/radios:
+    get:
+      tags: [stations]
+      operationId: listRadios
+      summary: Library radios (stations that play the owner's own tracks), with listener count and the track on air
+      responses:
+        "200": { description: List of radios }
+    post:
+      tags: [stations]
+      operationId: addRadio
+      summary: Create a library radio (name, optional genre filter, codec opus|mp3|aac, kbps 32-320, artist_gap 0-200)
+      responses:
+        "201": { description: Created }
+        "400": { description: Invalid field }
+  /v1/radios/{id}:
+    delete:
+      tags: [stations]
+      operationId: deleteRadio
+      summary: Delete a library radio
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: No such radio }
+  /v1/radios/{id}/stream:
+    get:
+      tags: [stations]
+      operationId: streamRadio
+      summary: Endless audio stream of the radio (one shared encoder, started by the first listener, stopped when the last leaves); sends an icy-name header
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Live audio
+          content:
+            audio/*:
+              schema: { type: string, format: binary }
+        "404": { description: No such radio }
   /v1/audio/{file_id}:
     get:
       tags: [library]

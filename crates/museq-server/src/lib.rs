@@ -6,6 +6,7 @@ pub mod extend;
 pub mod fetch;
 pub mod fingerprint;
 pub mod metadata;
+pub mod radio;
 pub mod scan;
 pub mod session;
 pub mod skins;

@@ -40,6 +40,8 @@ pub struct AppState {
     pub fetch: Arc<crate::fetch::FetchConfig>,
     /// ffmpeg for transcoding (`MUSEQ_FFMPEG`, default `ffmpeg` from PATH).
     pub ffmpeg: Arc<String>,
+    /// Running library radios.
+    pub radios: crate::radio::Hubs,
     /// At most this many transcodes at once.
     pub transcodes: Arc<tokio::sync::Semaphore>,
 }
@@ -73,6 +75,7 @@ impl AppState {
             limiters: Arc::new(crate::metadata::Limiters::default()),
             fetch: Arc::new(crate::fetch::FetchConfig::default()),
             ffmpeg: Arc::new("ffmpeg".into()),
+            radios: Default::default(),
             transcodes: Arc::new(tokio::sync::Semaphore::new(2)),
         }
     }
@@ -143,6 +146,15 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/candidates/{id}/accept", post(crate::metadata::accept))
         .route("/v1/candidates/{id}/reject", post(crate::metadata::reject))
         .route("/v1/fetch/status", get(fetch_status))
+        .route(
+            "/v1/radios",
+            get(crate::radio::list_radios).post(crate::radio::add_radio),
+        )
+        .route(
+            "/v1/radios/{id}",
+            axum::routing::delete(crate::radio::delete_radio),
+        )
+        .route("/v1/radios/{id}/stream", get(crate::radio::stream))
         .route("/v1/duplicates", get(crate::duplicates::list_duplicates))
         .route("/v1/duplicates/merge", post(crate::duplicates::merge))
         .route(
