@@ -6,51 +6,83 @@
 
 <p align="center">
 <!-- stack:start -->
-![Rust edition 2024](https://img.shields.io/badge/Rust-edition_2024-dea584?style=flat-square&logo=rust&logoColor=white) ![axum 0.8](https://img.shields.io/badge/axum-0.8-2f2f2f?style=flat-square) ![tokio 1.54](https://img.shields.io/badge/tokio-1.54-2f2f2f?style=flat-square) ![SQLite rusqlite 0.41](https://img.shields.io/badge/SQLite-rusqlite_0.41-003b57?style=flat-square&logo=sqlite&logoColor=white) ![Symphonia 0.6](https://img.shields.io/badge/Symphonia-0.6-2f2f2f?style=flat-square) ![TypeScript 7.0](https://img.shields.io/badge/TypeScript-7.0-3178c6?style=flat-square&logo=typescript&logoColor=white) ![Vite 8.3](https://img.shields.io/badge/Vite-8.3-646cff?style=flat-square&logo=vite&logoColor=white) ![Webamp 2.3](https://img.shields.io/badge/Webamp-2.3-4caf50?style=flat-square) ![OpenAPI 3.1.0](https://img.shields.io/badge/OpenAPI-3.1.0-6ba539?style=flat-square&logo=openapiinitiative&logoColor=white) ![Docker Containerfile](https://img.shields.io/badge/Docker-Containerfile-2496ed?style=flat-square&logo=docker&logoColor=white)
+<img src="https://img.shields.io/badge/Rust-edition_2024-dea584?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Rust edition 2024" height="20"> <img src="https://img.shields.io/badge/axum-0.8-2f2f2f?style=flat-square" alt="axum 0.8" height="20"> <img src="https://img.shields.io/badge/tokio-1.54-2f2f2f?style=flat-square" alt="tokio 1.54" height="20"> <img src="https://img.shields.io/badge/SQLite-rusqlite_0.41-003b57?style=flat-square&amp;logo=sqlite&amp;logoColor=white" alt="SQLite rusqlite 0.41" height="20"> <img src="https://img.shields.io/badge/Symphonia-0.6-2f2f2f?style=flat-square" alt="Symphonia 0.6" height="20"> <img src="https://img.shields.io/badge/TypeScript-7.0-3178c6?style=flat-square&amp;logo=typescript&amp;logoColor=white" alt="TypeScript 7.0" height="20"> <img src="https://img.shields.io/badge/Vite-8.3-646cff?style=flat-square&amp;logo=vite&amp;logoColor=white" alt="Vite 8.3" height="20"> <img src="https://img.shields.io/badge/Webamp-2.3-4caf50?style=flat-square" alt="Webamp 2.3" height="20"> <img src="https://img.shields.io/badge/OpenAPI-3.1.0-6ba539?style=flat-square&amp;logo=openapiinitiative&amp;logoColor=white" alt="OpenAPI 3.1.0" height="20"> <img src="https://img.shields.io/badge/Docker-Containerfile-2496ed?style=flat-square&amp;logo=docker&amp;logoColor=white" alt="Docker Containerfile" height="20">
 <!-- stack:end -->
 </p>
 
-A self-hosted music server and player. One headless server (Docker or Podman) that holds your library, fetches tracks, builds playlists, fixes tags, finds duplicates and streams radio. Thin clients talk to it over one API: a web player, and native players for Windows, Linux and Android. The first skin is the classic Winamp look.
+A self-hosted music server and player. One headless server (Docker or Podman) holds your library, serves it over one API, and thin clients talk to it. The web player uses Webamp, so the first skin is the classic Winamp look. Native clients and track fetching are planned, not built yet.
 
-**Status: early.** The server can scan a folder, search tracks, stream files with Range and manage playlists. There is no player UI yet. The full API is drafted in [`docs/openapi.yaml`](docs/openapi.yaml), the plan is in [`docs/ROADMAP.md`](docs/ROADMAP.md) and the design is in [`docs/SPEC.md`](docs/SPEC.md). 
+**Status: early, still changing.** The server and the web player work. We have tried them on localhost and in a headless browser, not yet across a LAN, with Podman or on a large library. Phases 0 to 3c of the [roadmap](docs/ROADMAP.md) are built. Native Android and desktop clients are not built. Fetching and downloading tracks is not built either; it will stay off by default when it arrives. No licence has been chosen yet.
 
-## What it's meant to do
+## What works today
 
-- Web player with classic skins (Webamp), native clients for Windows, Linux and Android
-- Online storage on the server, offline storage on the device
-- Radio: online stations (a Greek station list is included in `data/stations/`), a fake radio made from your own files, and a live channel from the phone's mic with auto-ducking and a small mixer
-- Transcoding for the radio (Opus in Ogg and others)
-- Fetch singles and playlists (Spotify link, then Deezer for the song id, then YouTube Music). Off by default, see the notes in the spec
-- Tag fixes from MusicBrainz and Discogs, duplicate detection by audio content, playlists that extend themselves with new artists in the same style
-- A control API so widgets and other apps can drive it
-- Runs on a server, or on a PC or phone as a local server; reachable over LAN, Tailscale or VPN, or a public endpoint if you choose
+- Library: scan a folder, read tags, search tracks (accent and case insensitive, Greek included), stream files with Range support
+- Web player: Webamp, login, library search, playlists, skin upload and picker, and a session that other tools can read and control
+- Playlists that extend themselves: when a playlist ends, new tracks by artists not yet in it, with the same genre, are added from your own library
+- Duplicates: detection by audio fingerprint (and by exact hash), with a proposed keeper. Nothing is ever deleted; a merge only changes the database
+- Metadata suggestions: MusicBrainz search for tracks with missing tags, and AcoustID lookup if you bring your own key. A suggestion changes the database only when you accept it; audio files are never rewritten
+- Radio stations: a station list (a Greek list is included in `data/stations/`) with search and a liveness check, played in the browser
+- A control API, described in `docs/openapi.yaml`, so widgets and other apps can drive the player
+
+## What is planned
+
+- Native clients for Android, Windows and Linux, with offline storage on the device
+- Fetching singles and playlists. Off by default, and not started until the terms of the services involved have been read
+- A radio made from your own files, transcoding, and a live channel from a phone's mic
+- Discogs tag suggestions, a web page for duplicates and suggestions (API only for now), and more skins
 
 ## Try what exists
 
-The server needs an owner token (at least 16 characters) and a folder of music. It scans the folder, serves tracks with Range support, and keeps playlists.
+The server needs an owner token (at least 16 characters) and a folder of music.
 
 ```bash
 cp .env.example .env            # then edit the token (.env is git-ignored)
 mkdir -p music                  # put some audio files in here
 docker compose up --build
+```
 
+Open http://127.0.0.1:8080/ for the web player and log in with the token. Or use the API:
+
+```bash
 export T=<your token>
 curl -XPOST -H "Authorization: Bearer $T" -H 'content-type: application/json' -d '{"kind":"scan"}' http://127.0.0.1:8080/v1/jobs
 curl -H "Authorization: Bearer $T" 'http://127.0.0.1:8080/v1/tracks?q=something'
 ```
 
-`GET /v1/health` is open. Everything else needs `Authorization: Bearer <token>`. The port is published on localhost only; change that in `compose.yaml` on purpose if you want LAN or Tailscale access. Podman should work with the same `Containerfile` but I haven't tested it.
+`GET /v1/health` is open. Everything else needs a login or `Authorization: Bearer <token>`. The port is published on localhost only; change that in `compose.yaml` on purpose if you want LAN or Tailscale access. Compose reads `MUSEQ_TOKEN` and `MUSEQ_MUSIC_DIR` (default `./music`) from `.env`. Podman should work with the same `Containerfile`, but it is untested.
 
-From source (recent Rust toolchain): `MUSEQ_TOKEN=... MUSEQ_LIBRARY=./music cargo run -p museq-server`. Settings: `MUSEQ_BIND` (default `127.0.0.1:8080`), `MUSEQ_LIBRARY`, `MUSEQ_DB`, `MUSEQ_TOKEN` or `MUSEQ_TOKEN_FILE`, `MUSEQ_STATIONS_SEED` (comma-separated station list files), `MUSEQ_ALLOW_PRIVATE_STATIONS=1` (allow radio stations on your own network; refused by default), `MUSEQ_ACOUSTID_KEY` (your own AcoustID application key, to identify tracks by audio), `MUSEQ_CONTACT` (contact shown to MusicBrainz in the User-Agent).
+From source (recent Rust toolchain, and Node for the web client): `MUSEQ_TOKEN=... MUSEQ_LIBRARY=./music cargo run -p museq-server`. Settings:
+
+- `MUSEQ_TOKEN` or `MUSEQ_TOKEN_FILE`: the owner token (one is required)
+- `MUSEQ_BIND`: listen address, default `127.0.0.1:8080`
+- `MUSEQ_LIBRARY`: the music folder, `MUSEQ_DB`: the SQLite file, `MUSEQ_SKINS_DIR`: where uploaded skins go
+- `MUSEQ_WEB_DIR`: a built web client to serve at `/` (the container image includes one)
+- `MUSEQ_STATIONS_SEED`: comma-separated station list files to import at startup
+- `MUSEQ_ALLOW_PRIVATE_STATIONS=1`: allow radio stations on your own network (refused by default)
+- `MUSEQ_ACOUSTID_KEY`: your own AcoustID application key, to identify tracks by audio (off without it)
+- `MUSEQ_CONTACT`: contact shown to MusicBrainz in the User-Agent
 
 ## Layout
 
 ```
 crates/museq-server/   the server (Rust, axum)
-docs/                  spec, roadmap, open questions, openapi.yaml
-data/stations/         Greek radio station list (credit inside)
+web/                   the web client (TypeScript, Vite, Webamp)
+docs/                  spec, roadmap, decisions, openapi.yaml
+data/stations/         radio station lists (credit inside)
+scripts/               checks and helper scripts
+contrib/               small extras, such as a now-playing script for status bars
 Containerfile, compose.yaml
 ```
+
+## Docs
+
+- [docs/SPEC.md](docs/SPEC.md): what the system does and how
+- [docs/ROADMAP.md](docs/ROADMAP.md): phases, status and what is checked
+- [docs/COMPARISON.md](docs/COMPARISON.md): similar projects and what we may borrow
+- [docs/INSPIRATION.md](docs/INSPIRATION.md): ideas and sources
+- [docs/PLUGINS.md](docs/PLUGINS.md): widgets and plugins
+- [docs/openapi.yaml](docs/openapi.yaml): the API contract
+- [docs/DECISIONS.md](docs/DECISIONS.md): choices made and why
 
 ## Contributing
 

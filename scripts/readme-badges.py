@@ -7,7 +7,7 @@
 Versions come from crates/museq-server/Cargo.toml, web/package.json and docs/openapi.yaml,
 so changing a dependency and running this keeps the README honest.
 """
-import json, re, sys
+import html, json, re, sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
@@ -30,7 +30,8 @@ def badge(label: str, message: str, color: str, logo: str = "") -> str:
     url = f"https://img.shields.io/badge/{esc(label)}-{esc(message)}-{color}?style=flat-square"
     if logo:
         url += f"&logo={logo}&logoColor=white"
-    return f"![{label} {message}]({url})"
+    alt = f"{label} {message}"
+    return f'<img src="{html.escape(url, quote=True)}" alt="{html.escape(alt, quote=True)}" height="20">'
 
 
 def build() -> str:
