@@ -52,15 +52,22 @@ pub fn stream<G: Send + 'static>(
     let (enc, container, mime) = codec.args();
     let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let mut cmd = tokio::process::Command::new(ffmpeg);
-    cmd.args(["-nostdin", "-v", "error", "-i"])
-        .arg(&path)
-        .args(["-vn", "-map_metadata", "-1", "-c:a", enc, "-b:a"])
-        .arg(format!("{kbps}k"))
-        .args(["-f", container, "pipe:1"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
+    cmd.args([
+        "-nostdin",
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file",
+        "-i",
+    ])
+    .arg(format!("file:{}", path.display()))
+    .args(["-vn", "-map_metadata", "-1", "-c:a", enc, "-b:a"])
+    .arg(format!("{kbps}k"))
+    .args(["-f", container, "pipe:1"])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null())
+    .kill_on_drop(true);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(_) => {

@@ -125,7 +125,7 @@ Exit: Android plays offline with the screen off for 1 h; the same `.wsz` renders
 ## Phase 5: library radio + transcoding (~2-3 weeks)
 - [ ] Measured test: in-process Opus vs ffmpeg for one station on one core; record the decision
 - [ ] Library stations with rotation rules, codec presets (Opus/Ogg, MP3, AAC), Icecast-compatible output
-- [x] `codec`/`kbps` on `/v1/audio/{file_id}` (built 2026-11-07: ffmpeg subprocess, no shell, streamed, two at once, 501 without ffmpeg; `tests/transcode.rs`, 5 tests incl. fingerprint match of the transcode; `MUSEQ_FFMPEG` sets the path). Not done: caching, Range on transcodes, bitrate sizes not measured
+- [x] `codec`/`kbps` on `/v1/audio/{file_id}` (built 2026-11-07: ffmpeg subprocess, no shell, streamed, two at once, 501 without ffmpeg; `tests/transcode.rs`, 5 tests incl. fingerprint match of the transcode; `MUSEQ_FFMPEG` sets the path). Not done: caching, Range on transcodes, a failed ffmpeg mid-stream still ends as a short 200, a stalled client holds a slot until it disconnects, ffmpeg in the image is the distro package (not the pinned build SPEC asks for), bitrate sizes not measured
 Image adds: `ffmpeg`.
 Exit: a station runs 24 h under 1 CPU core; VLC, the browser and the widget play it.
 
