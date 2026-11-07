@@ -107,7 +107,7 @@ Open the app, enter the server address and the owner token, and tap "Connect and
 - **Battery:** on many phones the system stops a playing app after a while with the screen off. Tap "Allow background playback" in the app and allow it. On OnePlus also set Settings, Apps, Mus-Eq, Battery to unrestricted; the app cannot change that one. With the exemption on, one run played about 35 minutes with the screen off before it was cut short for an unrelated reason; a full hour has not been run.
 - **HTTP and HTTPS:** the app accepts both. With plain `http://` the owner token travels unencrypted, so use it on a trusted network only and the app says so. For HTTPS put a reverse proxy that terminates TLS in front of the server; that has not been tried against a real certificate.
 - **Redirects:** downloads and API calls never follow a redirect. The player does follow one, so if a proxy in front of the server ever redirected a stream to a different host, the token would go along with the request. The server itself does not redirect.
-- **Token storage:** the token is kept in the app's private preferences, not encrypted.
+- **Token storage:** the token is stored encrypted, with an AES-GCM key held by the Android Keystore (the key needs no unlock, because the playback service reads the token while the phone is locked). An older plaintext copy is migrated and removed only after the encrypted copy has been read back correctly; if the key is ever lost, the app asks for the token again instead of failing. Tried on one phone; not tried on others, and not tried with the service restarting while the phone is locked.
 - Not built yet: skins, a polished interface, the live mic channel. Offline pins have no change manifest beyond the check above.
 
 ## Layout

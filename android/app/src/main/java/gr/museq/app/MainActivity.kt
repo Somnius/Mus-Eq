@@ -61,7 +61,7 @@ class MainActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             hint = "http://10.0.0.3:8096"; setText(Prefs.base(context)) }
         val tok = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             hint = "owner token"; setText(Prefs.token(context)) }
         query = EditText(this).apply { hint = "search (library and stations)" }
         val go = Button(this).apply { text = "Connect and search" }
@@ -80,9 +80,14 @@ class MainActivity : Activity() {
         go.setOnClickListener {
             val base = url.text.toString().trim()
             if (!(base.startsWith("http://") || base.startsWith("https://"))) { status.text = "address must start with http:// or https://"; return@setOnClickListener }
-            Prefs.save(this, base, tok.text.toString())
+            if (!Prefs.save(this, base, tok.text.toString())) {
+                status.text = "could not store the token securely on this phone; nothing was changed"
+                return@setOnClickListener
+            }
             open("library")
         }
+        // a saved address without a token means the token was lost (for example the key store was reset): ask again
+        if (Prefs.base(this).isNotEmpty() && Prefs.token(this).isEmpty()) status.text = "enter the owner token again"
         list.setOnItemClickListener { _, _, i, _ -> rows.getOrNull(i)?.onTap?.invoke() }
         list.setOnItemLongClickListener { _, _, i, _ -> rows.getOrNull(i)?.onLong?.invoke(); true }
     }
@@ -150,7 +155,7 @@ class MainActivity : Activity() {
     }
 
     private fun plainHttpNote() =
-        if (Prefs.base(this).startsWith("http://")) " (plain http: the token is not encrypted)" else ""
+        if (Prefs.base(this).startsWith("http://")) " (plain http: the token travels unencrypted)" else ""
 
     private fun playlists() {
         val app = applicationContext
