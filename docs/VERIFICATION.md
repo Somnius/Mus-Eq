@@ -2,7 +2,9 @@
 
 Things the roadmap marks "not verified", with the check that settles each one, what counts as a pass, and what only the owner can provide. Real-music checks are read-only on the owner's library: copies and variants live in the git-ignored `.work/` folder, and only aggregate numbers (counts, score ranges) go into these docs, never titles or paths.
 
-Status: 2026-11-07. Items 1, 2, 4, 5, 6 and 9 are done (results below); 3, 7 and 8 wait for something only the owner can provide.
+Status: 2026-11-07. Items 1, 2, 4, 5, 6 and 9 are done (results below); 3, 7, 8 and 11 wait for something only the owner can provide.
+
+The numbers in items 1 and 2 come from a one-off run on the owner's library through `tests/tune.rs` (an `#[ignore]` test that reads `MUSEQ_TUNE_DIR`). The library is not in the repository, so those numbers cannot be reproduced from a checkout; the test only shows how they were produced.
 
 ## 1. Duplicate thresholds on real music
 **Result (done):** 188 labelled files built read-only from 20 radio tracks and 6 hour-long lofi mixes (twelve clips, two per mix): lossless, MP3, Ogg Vorbis and Opus re-encodes, a gain change, a trimmed head and a partial copy. All 492 same-recording pairs scored 0.00 to 1.27 (median 0.42). The 17,086 other pairs, 9,406 of them from the same mix, produced no stretch that scored below 7.4 and none that covered more than 11% of the shorter recording: zero false merges at every threshold up to 4.0. `MAX_SCORE` 2.0 and `MIN_COVERAGE` 0.8 stay; they sit in a gap of about six points. Partial copies are found too when the length window is lifted (the window stays at 4 s, so they are not offered). Not covered: live, remix and instrumental versions of one song, which the library does not contain. Tool: `tests/tune.rs`.
@@ -78,7 +80,14 @@ Original plan:
 - Stations refused as "not public" once and fine the next time: log the resolved addresses on repeated runs.
 - Playlist extension on a real library: count how many real tracks have a genre tag at all (counts only).
 
+## 11. Fetch against the real services
+**Status:** not done. Every fetch test uses a fake `yt-dlp` script and a fake Spotify page; no request to YouTube Music or Spotify has been made from this code.
+- **Needs the owner:** having read the terms of the services, the acknowledgement in `MUSEQ_FETCH_ACK`, and their own `yt-dlp` binary.
+- **Check:** one YouTube Music link and one Spotify track link the owner may store, on a throwaway library under `.work/`. Record whether the Spotify page still carries the expected meta tags, whether yt-dlp's search JSON and `--print after_move:filepath` output match what the code reads, which upload the matcher picked and why, and the stored provenance row. Then a second fetch of the same link (must be skipped) and a link to a removed video (must fail with "gone").
+- **Pass:** the track plays from the library with the right title and artist; nothing outside the inbox changes; the cookies file (if any) is byte-identical afterwards.
+- **Effort:** half an hour once enabled.
+
 ## Order
 **Now, without the owner:** items 9, 5, 4, 6, item 1 on MP3, and an Opus prototype.
-**Needs a key, a package or a decision:** 3 (key), 2 (headers and the pure-Rust question), 1 (the partial-copy question), 7 (two devices), 8 (Podman).
+**Needs a key, a package or a decision:** 3 (key), 2 (headers and the pure-Rust question), 1 (the partial-copy question), 7 (two devices), 8 (Podman), 11 (terms read, acknowledgement, yt-dlp).
 **Not worth doing yet:** Discogs, web pages for duplicates and suggestions, full-library Opus timing before item 2 lands.

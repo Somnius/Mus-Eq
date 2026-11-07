@@ -528,22 +528,27 @@ paths:
               required: [kind]
               properties:
                 kind: { type: string, enum: [scan, check_stations, fetch, tag, fingerprint] }
-                input: { type: object, additionalProperties: true }
+                input:
+                  type: object
+                  additionalProperties: true
+                  description: "For fetch: `{\"url\": \"…\"}`, one https link to a single YouTube/YouTube Music video or a single Spotify track (playlists and albums are refused)"
+                  properties:
+                    url: { type: string, format: uri }
                 track_ids: { type: array, items: { type: string }, description: "For tag: only these tracks (default: tracks with a missing artist or album)" }
       responses:
         "202":
-          description: Accepted
+          description: Accepted. A finished fetch job has `result.outcome` = imported (with file_id, track_id, title, artist, album, video_id) or skipped (the video was already fetched)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Job" }
         "409":
-          description: The same kind of job is already running (scan and fingerprint also exclude each other)
+          description: The same kind of job is already running (scan, fingerprint and fetch also exclude each other)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "400": { description: "Unknown job kind", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "400": { description: "Unknown job kind, or (fetch) a link that is not a supported single-track https URL", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "403":
-          description: Job kind disabled by configuration
+          description: Job kind disabled by configuration (fetch is off by default; the message says what is missing)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -561,6 +566,23 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Job" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/fetch/status:
+    get:
+      tags: [jobs]
+      operationId: fetchStatus
+      summary: Whether fetching is enabled, and why not if it is not
+      responses:
+        "200":
+          description: Fetch configuration state (never contains paths to cookies or any secret)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, needs_ack]
+                properties:
+                  enabled: { type: boolean }
+                  reason: { type: [string, "null"], description: "Why it is off (null when enabled)" }
+                  needs_ack: { type: string, description: "The exact sentence MUSEQ_FETCH_ACK must carry" }
   /v1/skins/{id}:
     get:
       tags: [skins]

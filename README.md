@@ -10,9 +10,9 @@
 <!-- stack:end -->
 </p>
 
-A self-hosted music server and player. One headless server (Docker or Podman) holds your library, serves it over one API, and thin clients talk to it. The web player uses Webamp, so the first skin is the classic Winamp look. Native clients and track fetching are planned, not built yet.
+A self-hosted music server and player. One headless server (Docker or Podman) holds your library, serves it over one API, and thin clients talk to it. The web player uses Webamp, so the first skin is the classic Winamp look. Native clients are planned, not built yet.
 
-**Status: early, still changing.** The server and the web player work. We have tried them on localhost and in a headless browser, not yet across a LAN, with Podman or on a large library. Phases 0 to 3c of the [roadmap](docs/ROADMAP.md) are built. Native Android and desktop clients are not built. Fetching and downloading tracks is not built either; it will stay off by default when it arrives. No licence has been chosen yet.
+**Status: early, still changing.** The server and the web player work. We have tried them on localhost and in a headless browser, not yet across a LAN, with Podman or on a large library. Phases 0 to 3d of the [roadmap](docs/ROADMAP.md) are built. Native Android and desktop clients are not built. Fetching single tracks exists but is off by default and has only been tested against fakes, never against the real services. No licence has been chosen yet.
 
 ## What works today
 
@@ -27,7 +27,7 @@ A self-hosted music server and player. One headless server (Docker or Podman) ho
 ## What is planned
 
 - Native clients for Android, Windows and Linux, with offline storage on the device
-- Fetching singles and playlists. Off by default, and not started until the terms of the services involved have been read
+- Fetching playlists and albums (single tracks exist, see below)
 - A radio made from your own files, transcoding, and a live channel from a phone's mic
 - Discogs tag suggestions, a web page for duplicates and suggestions (API only for now), and more skins
 
@@ -61,6 +61,22 @@ From source (recent Rust toolchain, and Node for the web client): `MUSEQ_TOKEN=.
 - `MUSEQ_ALLOW_PRIVATE_STATIONS=1`: allow radio stations on your own network (refused by default)
 - `MUSEQ_ACOUSTID_KEY`: your own AcoustID application key, to identify tracks by audio (off without it)
 - `MUSEQ_CONTACT`: contact shown to MusicBrainz in the User-Agent
+
+## Fetching tracks (off by default)
+
+The server can fetch one track at a time from a YouTube Music link or a Spotify track link, through your own copy of `yt-dlp`, and file it in your library with a note of where it came from. It is off by default and stays off until you switch it on yourself.
+
+**Read the terms of service of YouTube, YouTube Music and Spotify first, and only fetch what you are allowed to store.** Whether that is the case depends on where you live and what you fetch; this project does not decide it for you, and nothing here has been checked against those terms. Enabling it means you did that reading:
+
+```bash
+MUSEQ_FETCH=on
+MUSEQ_FETCH_ACK=i-have-read-the-terms-and-fetch-only-what-i-may-store
+MUSEQ_FETCH_YTDLP=/absolute/path/to/yt-dlp     # your own binary; the image does not include one
+```
+
+Then `GET /v1/fetch/status` tells you whether it is on (and if not, why), and `POST /v1/jobs` with `{"kind":"fetch","input":{"url":"https://music.youtube.com/watch?v=..."}}` starts a job. Playlists and albums are refused. Optional: `MUSEQ_FETCH_INBOX` (default `<library>/_fetched`), `MUSEQ_FETCH_MAX_BYTES`, `MUSEQ_FETCH_TIMEOUT_S`, and `MUSEQ_FETCH_COOKIES` (a Netscape cookies file with permissions 600, used only when the service asks for a sign-in; the server works on a copy and never writes to your file).
+
+This has been tested only against a fake `yt-dlp` and a fake Spotify page. No real request to either service has been made from this code yet, so the first real run may find something the fakes did not.
 
 ## Layout
 

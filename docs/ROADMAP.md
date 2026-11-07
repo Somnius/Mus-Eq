@@ -8,7 +8,7 @@ Status and exit checks only; behavior is in `SPEC.md`, choices in `DECISIONS.md`
 | 1a | Server core: config, token, SQLite, scan, tracks, range audio | done |
 | 1b | Web client (Webamp), session + WebSocket | done (pushed, CI green) |
 | 2 | Stations (external list, passthrough) | done (pushed, CI green) |
-| 3 | Metadata, duplicates, extension, fetch (3a-3d) | 3a-3c built and reviewed, 3d blocked on Q2 |
+| 3 | Metadata, duplicates, extension, fetch (3a-3d) | 3a-3c built and reviewed; 3d built on fakes (single tracks, off by default), review and real run pending |
 | 4 | Native clients + offline (Android, desktop) | todo |
 | 5 | Library radio + transcoding | todo |
 | 6 | Live phone radio (mic, ducking, mixer) | todo |
@@ -100,10 +100,19 @@ Exit met on fixtures: a short playlist grows by N tracks with no repeated artist
 ### Review of 3a-3c (2026-11-07)
 Two independent reviews and a separate full check run (48 tests then, 53 now, all 20 browser checks). No code path deletes or rewrites an audio file; every new route is behind auth; the AcoustID key stays out of errors and results (now pinned by a test). Fixed: migrations are atomic per step (a failed step changes nothing, tested); merge keeps the owner's corrections and moves pending suggestions; accepting a sparse candidate no longer blanks artist or album; suggestions without an id no longer pile up; tracks expose their genre; `tag` on named tracks includes corrected ones and is capped at 1000 ids; SPEC data model and job rules corrected. Accepted and noted: `/v1/duplicates` compares in memory (fine for a home library, not verified at scale); `tag` is bounded only by the MusicBrainz rate limit.
 
-### 3d: fetch (blocked on Q2)
-- [ ] Not started and no download code until Q2 is answered. Stays behind the config flag, off by default; the terms of YouTube, Spotify and Deezer are read by the owner first.
+### 3d: fetch (built 2026-11-07, single tracks only, no real network)
+- [x] Off by default: `MUSEQ_FETCH=on` plus the typed acknowledgement `MUSEQ_FETCH_ACK` plus an absolute path to an existing `yt-dlp`; `GET /v1/fetch/status` says what is missing; `fetch` jobs answer 403 while off (tested: default config, missing acknowledgement, relative or missing tool path, cookies file with loose permissions)
+- [x] Link parsing: single YouTube/YouTube Music videos and single Spotify tracks only; everything else (http, playlists, albums, other hosts, odd ids) answers 400 before anything runs (tested)
+- [x] YouTube link: yt-dlp run without a shell on a server-built `watch?v=<id>` address, file kept only if it stayed in the work folder with an audio extension and under the size cap, stored in the inbox under a sanitised name, scanned, fingerprinted, tagged from the source, recorded in `provenance` (migration v8); a second fetch of the same video is skipped (tested with a fake yt-dlp script)
+- [x] Spotify link: track page read from its meta tags (fake page server in tests), yt-dlp search, matcher (title overlap, duration, artist, version words, Topic-channel preference); a changed page fails without downloading; private hosts refused (tested)
+- [x] Failure handling: tool errors sorted into plain reasons and the job fails with nothing left behind; a run over the timeout is killed; cookies are used only after a sign-in wall, as a per-run copy, and the original is never written (tested); hostile titles cannot leave the inbox (tested)
+- [x] One fetch at a time, never beside a scan or fingerprint job (tested)
+- [x] 17 tests in `tests/fetch.rs`, all against a fake yt-dlp and a fake Spotify page; no test touches the network
+- [ ] **Not done:** playlists and albums (refused with a message); Deezer (not used at all; the Spotify page carries what the matcher needs); `yt-dlp` in the container image (the owner supplies the path); a web page for fetching (API only)
+- [ ] **Not verified:** no real YouTube Music or Spotify request has been made from this code. The Spotify meta-tag names, yt-dlp's search JSON shape and the `--print after_move:filepath` output were written from documentation and memory, not from a live run; the first real run will settle them. The matcher's thresholds (0.6 overlap, 5 s) come from hand-written candidates only
+Exit met on fakes: fetch fails cleanly with the flag off (403 with the reason); with the fake tool a link becomes a catalogued, fingerprinted track with provenance.
 
-Image adds: nothing for 3a to 3c (fingerprinting is in-process Rust); `yt-dlp` pinned for 3d.
+Image adds: nothing for 3a to 3d (fingerprinting is in-process Rust; `yt-dlp` is not shipped yet).
 Exit (whole phase): a known duplicate pair collapses to one preferred file; a mistagged file changes only on accept; a short playlist grows with no repeated artist; fetch fails cleanly with the flag off. Gate before 3d: independent check, both reviews, docs, green light.
 
 ## Phase 4: native clients + offline (~4-6 weeks)
@@ -129,6 +138,7 @@ Exit: real handset: music drops while the owner speaks and returns after; a web 
 Phone-as-server (Q7), on-device dedupe (Q8), second skins.
 
 ## Phase log
+- 2026-11-07 Phase 3d built: fetch module (YouTube and Spotify single tracks via yt-dlp, provenance table, typed acknowledgement), 17 tests on a fake tool and a fake page; no real network run, review pending.
 - 2026-11-06 Phase 0 scaffold, Rust chosen, Greek station seed added.
 - 2026-11-07 Phase 2 (stations) reviewed by two reviewers, fixed (private-address refusal, redirect checks, audio sniffing), pushed; CI green incl. the browser test.
 - 2026-11-07 Phase 1 (1a+1b) reviewed by two reviewers, fixed, pushed; CI (rust incl. tests, web, openapi) green.
