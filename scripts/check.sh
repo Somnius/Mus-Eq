@@ -20,7 +20,8 @@ port=${MUSEQ_TEST_PORT:-8096}
 MUSEQ_ALLOW_PRIVATE_STATIONS=1 MUSEQ_TOKEN=$token MUSEQ_BIND=127.0.0.1:$port MUSEQ_LIBRARY=$work/library \
   MUSEQ_DB=$work/db MUSEQ_SKINS_DIR=$work/skins MUSEQ_WEB_DIR=$PWD/web/dist MUSEQ_STATIONS_SEED=$PWD/crates/museq-server/tests/fixtures/stations-seed.txt ./target/debug/museq-server >"$work/log" 2>&1 &
 pid=$!
-sleep 1
+# wait for the server to answer (a slow runner needs more than a second), up to 30 s
+for _ in $(seq 1 60); do curl -s -o /dev/null "http://127.0.0.1:$port/" && break; kill -0 "$pid" 2>/dev/null || { echo "FAIL: server exited"; cat "$work/log"; exit 1; }; sleep 0.5; done
 curl -fsS -X POST -H "Authorization: Bearer $token" -H 'content-type: application/json' -d '{"kind":"scan"}' "http://127.0.0.1:$port/v1/jobs" >/dev/null
 sleep 1
 (cd web && MUSEQ_URL=http://127.0.0.1:$port MUSEQ_TOKEN=$token run node e2e/smoke.mjs)
