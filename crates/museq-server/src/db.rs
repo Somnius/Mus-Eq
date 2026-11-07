@@ -222,6 +222,9 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
              );",
         )?;
     }
+    if version < 10 {
+        step(&conn, 10, "ALTER TABLE radio ADD COLUMN listen_key TEXT;")?;
+    }
     // A job left "running" by a crash will never finish.
     conn.execute("UPDATE job SET state='failed', error='interrupted by restart' WHERE state IN ('queued','running')", [])?;
     Ok(conn)
@@ -290,7 +293,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         // data carried across, the new columns filled in, the new tables there
         let (track_id, mtime): (Option<i64>, i64) = conn
             .query_row("SELECT track_id, mtime FROM file WHERE id=7", [], |r| {

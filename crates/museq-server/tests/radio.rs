@@ -380,3 +380,73 @@ async fn a_listen_key_opens_only_its_own_stream() {
         assert_eq!(ok.status(), StatusCode::OK);
     }
 }
+
+#[tokio::test]
+async fn keys_are_random_per_radio_and_can_be_replaced() {
+    let app = app_with_library().await;
+    let (_, a) = call(&app, Method::POST, "/v1/radios", Some(json!({"name": "A"}))).await;
+    let id = a["id"].as_str().unwrap().to_string();
+    let old = a["listen_path"].as_str().unwrap().to_string();
+    assert_eq!(
+        call(&app, Method::GET, "/v1/radios", None).await.1[0]["listen_path"],
+        old,
+        "stable between reads"
+    );
+    let anon = |uri: &str| {
+        Request::builder()
+            .uri(uri.to_string())
+            .body(Body::empty())
+            .unwrap()
+    };
+    // a missing station with a made-up key, trailing slash and encoded id all stay closed
+    for bad in [
+        "/v1/radios/999/stream?key=abc",
+        &format!("/v1/radios/{id}/stream/?key=x"),
+        &format!(
+            "/v1/radios/%31/stream?key={}",
+            old.split("key=").nth(1).unwrap()
+        ),
+    ] {
+        let st = app.clone().oneshot(anon(bad)).await.unwrap().status();
+        assert!(
+            st == StatusCode::UNAUTHORIZED || st == StatusCode::NOT_FOUND,
+            "{bad}: {st}"
+        );
+    }
+    let (s, r) = call(
+        &app,
+        Method::POST,
+        &format!("/v1/radios/{id}/rekey"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let new = r["listen_path"].as_str().unwrap().to_string();
+    assert_ne!(new, old);
+    assert_eq!(
+        app.clone().oneshot(anon(&old)).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED,
+        "the old key is dead"
+    );
+    assert_eq!(
+        call(&app, Method::POST, "/v1/radios/999/rekey", Some(json!({})))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    // HEAD with a key is refused, and a valid key on a deleted radio opens nothing
+    let head = Request::builder()
+        .method(Method::HEAD)
+        .uri(new.clone())
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(head).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    call(&app, Method::DELETE, &format!("/v1/radios/{id}"), None).await;
+    assert_eq!(
+        app.clone().oneshot(anon(&new)).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+}

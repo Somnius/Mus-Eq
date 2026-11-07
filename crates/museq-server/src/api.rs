@@ -155,6 +155,7 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(crate::radio::delete_radio),
         )
         .route("/v1/radios/{id}/stream", get(crate::radio::stream))
+        .route("/v1/radios/{id}/rekey", post(crate::radio::rekey))
         .route("/v1/duplicates", get(crate::duplicates::list_duplicates))
         .route("/v1/duplicates/merge", post(crate::duplicates::merge))
         .route(
@@ -221,16 +222,16 @@ async fn auth(State(s): State<AppState>, req: Request, next: Next) -> Response {
         .map(|t| ct_eq(t.as_bytes(), s.token.as_bytes()))
         .unwrap_or(false);
     // a radio's own listen key opens that radio's stream, and nothing else
-    let radio_key = req.method() == Method::GET
+    let radio_key = !bearer
+        && req.method() == Method::GET
         && radio_stream_id(req.uri().path()).is_some_and(|id| {
             req.uri()
                 .query()
                 .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("key=")))
                 .is_some_and(|k| {
-                    ct_eq(
-                        k.as_bytes(),
-                        crate::radio::listen_key(&s.token, id).as_bytes(),
-                    )
+                    let conn = crate::db::lock(&s.db);
+                    crate::radio::listen_key(&conn, id)
+                        .is_some_and(|real| ct_eq(k.as_bytes(), real.as_bytes()))
                 })
         });
     if !bearer && !radio_key {

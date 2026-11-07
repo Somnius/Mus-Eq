@@ -73,16 +73,49 @@ pub fn pick_next(cands: &[Cand], recent: &VecDeque<Cand>, gap: usize, roll: u64)
     Some(pool[(roll % pool.len() as u64) as usize].clone())
 }
 
-/// A key that opens one radio's stream and nothing else, for players that cannot send a header
-/// (VLC, a phone's media player). Derived from the server token, so changing the token revokes it.
-pub fn listen_key(token: &str, id: i64) -> String {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(b"museq-radio-listen\0");
-    h.update(token.as_bytes());
-    h.update(b"\0");
-    h.update(id.to_string().as_bytes());
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+/// A random key that opens one radio's stream and nothing else, for players that cannot send a
+/// header (VLC, a phone's media player). Stored per radio, so it can be revoked on its own and
+/// says nothing about the server token.
+pub fn new_listen_key() -> String {
+    let mut b = [0u8; 16];
+    let _ = getrandom::fill(&mut b);
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// The radio's key, created on first use for radios made before keys existed.
+pub fn listen_key(conn: &rusqlite::Connection, id: i64) -> Option<String> {
+    let cur: Option<Option<String>> = conn
+        .query_row("SELECT listen_key FROM radio WHERE id=?1", [id], |r| {
+            r.get(0)
+        })
+        .ok();
+    match cur? {
+        Some(k) => Some(k),
+        None => {
+            let k = new_listen_key();
+            conn.execute("UPDATE radio SET listen_key=?2 WHERE id=?1", params![id, k])
+                .ok()?;
+            Some(k)
+        }
+    }
+}
+
+pub async fn rekey(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
+    let n = {
+        let conn = db::lock(&s.db);
+        conn.execute(
+            "UPDATE radio SET listen_key=?2 WHERE id=?1",
+            params![id, new_listen_key()],
+        )
+    };
+    match n {
+        Ok(0) => err(StatusCode::NOT_FOUND, "no such radio"),
+        Ok(_) => match load(&s, Some(id)) {
+            Ok(mut v) if !v.is_empty() => Json(v.remove(0)).into_response(),
+            _ => internal("radio vanished"),
+        },
+        Err(e) => internal(e),
+    }
 }
 
 fn roll() -> u64 {
@@ -134,7 +167,10 @@ fn load(s: &AppState, id: Option<i64>) -> rusqlite::Result<Vec<Radio>> {
                 codec,
                 kbps,
                 artist_gap,
-                listen_path: format!("/v1/radios/{id}/stream?key={}", listen_key(&s.token, id)),
+                listen_path: format!(
+                    "/v1/radios/{id}/stream?key={}",
+                    listen_key(&conn, id).unwrap_or_default()
+                ),
                 listeners: hub.map_or(0, |h| h.tx.receiver_count()),
                 now_track_id: hub
                     .and_then(|h| *h.now.lock().unwrap_or_else(|e| e.into_inner()))

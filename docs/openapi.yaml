@@ -229,11 +229,21 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { description: No such radio }
+  /v1/radios/{id}/rekey:
+    post:
+      tags: [stations]
+      operationId: rekeyRadio
+      summary: Replace the radio's listen key (the old listen_path stops working)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: The radio with its new listen_path }
+        "404": { description: No such radio }
   /v1/radios/{id}/stream:
     get:
       tags: [stations]
       operationId: streamRadio
-      summary: Endless audio stream of the radio, also openable with ?key= from the radio's listen_path (a key for this one stream only) (one shared encoder, started by the first listener, stopped when the last leaves); sends an icy-name header
+      summary: Endless audio stream of the radio, also openable with ?key= from the radio's listen_path (a random key for this one stream only, replaceable with rekey) (one shared encoder, started by the first listener, stopped when the last leaves); sends an icy-name header
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
