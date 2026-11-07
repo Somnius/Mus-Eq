@@ -205,6 +205,13 @@ fn cookie_token(headers: &HeaderMap) -> Option<String> {
         .map(|(_, v)| v.to_string())
 }
 
+fn radio_stream_id(path: &str) -> Option<i64> {
+    path.strip_prefix("/v1/radios/")?
+        .strip_suffix("/stream")?
+        .parse()
+        .ok()
+}
+
 async fn auth(State(s): State<AppState>, req: Request, next: Next) -> Response {
     let bearer = req
         .headers()
@@ -213,7 +220,20 @@ async fn auth(State(s): State<AppState>, req: Request, next: Next) -> Response {
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|t| ct_eq(t.as_bytes(), s.token.as_bytes()))
         .unwrap_or(false);
-    if !bearer {
+    // a radio's own listen key opens that radio's stream, and nothing else
+    let radio_key = req.method() == Method::GET
+        && radio_stream_id(req.uri().path()).is_some_and(|id| {
+            req.uri()
+                .query()
+                .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("key=")))
+                .is_some_and(|k| {
+                    ct_eq(
+                        k.as_bytes(),
+                        crate::radio::listen_key(&s.token, id).as_bytes(),
+                    )
+                })
+        });
+    if !bearer && !radio_key {
         let cookie = cookie_token(req.headers())
             .map(|id| {
                 let jar = s.cookies.lock().unwrap_or_else(|e| e.into_inner());

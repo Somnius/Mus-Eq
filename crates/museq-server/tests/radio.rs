@@ -296,3 +296,87 @@ async fn deleting_a_station_ends_its_stream_at_once() {
         "the stream kept going after the station was deleted"
     );
 }
+
+#[tokio::test]
+async fn a_listen_key_opens_only_its_own_stream() {
+    let app = app_with_library().await;
+    let (_, a) = call(&app, Method::POST, "/v1/radios", Some(json!({"name": "A"}))).await;
+    let (_, b) = call(&app, Method::POST, "/v1/radios", Some(json!({"name": "B"}))).await;
+    let path_a = a["listen_path"].as_str().unwrap().to_string();
+    let path_b = b["listen_path"].as_str().unwrap().to_string();
+    assert!(
+        path_a.contains("?key=") && !path_a.contains(TOKEN),
+        "the token itself never appears in the path"
+    );
+    let anon = |uri: String, method: Method| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap()
+    };
+    let id_b = b["id"].as_str().unwrap();
+    // b's key does not open a's stream, a wrong key does not open anything, other routes stay closed
+    let swapped = format!(
+        "/v1/radios/{}/stream?key={}",
+        a["id"].as_str().unwrap(),
+        path_b.split("key=").nth(1).unwrap()
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(anon(swapped, Method::GET))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(anon(
+                format!("/v1/radios/{id_b}/stream?key=nope"),
+                Method::GET
+            ))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(anon(
+                format!("/v1/radios?key={}", path_a.split("key=").nth(1).unwrap()),
+                Method::GET
+            ))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(anon(
+                format!(
+                    "/v1/radios/{id_b}?key={}",
+                    path_b.split("key=").nth(1).unwrap()
+                ),
+                Method::DELETE
+            ))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    // the right key reaches the handler (200 with ffmpeg; the station may end at once without it)
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_ok()
+    {
+        let ok = app
+            .clone()
+            .oneshot(anon(path_a, Method::GET))
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
+    }
+}

@@ -73,6 +73,18 @@ pub fn pick_next(cands: &[Cand], recent: &VecDeque<Cand>, gap: usize, roll: u64)
     Some(pool[(roll % pool.len() as u64) as usize].clone())
 }
 
+/// A key that opens one radio's stream and nothing else, for players that cannot send a header
+/// (VLC, a phone's media player). Derived from the server token, so changing the token revokes it.
+pub fn listen_key(token: &str, id: i64) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"museq-radio-listen\0");
+    h.update(token.as_bytes());
+    h.update(b"\0");
+    h.update(id.to_string().as_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn roll() -> u64 {
     let mut b = [0u8; 8];
     let _ = getrandom::fill(&mut b);
@@ -88,6 +100,8 @@ pub struct Radio {
     kbps: i64,
     artist_gap: i64,
     listeners: usize,
+    /// Path (with key) a player without header support can open.
+    listen_path: String,
     now_track_id: Option<String>,
 }
 
@@ -120,6 +134,7 @@ fn load(s: &AppState, id: Option<i64>) -> rusqlite::Result<Vec<Radio>> {
                 codec,
                 kbps,
                 artist_gap,
+                listen_path: format!("/v1/radios/{id}/stream?key={}", listen_key(&s.token, id)),
                 listeners: hub.map_or(0, |h| h.tx.receiver_count()),
                 now_track_id: hub
                     .and_then(|h| *h.now.lock().unwrap_or_else(|e| e.into_inner()))

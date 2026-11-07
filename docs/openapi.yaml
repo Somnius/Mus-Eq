@@ -233,7 +233,7 @@ paths:
     get:
       tags: [stations]
       operationId: streamRadio
-      summary: Endless audio stream of the radio (one shared encoder, started by the first listener, stopped when the last leaves); sends an icy-name header
+      summary: Endless audio stream of the radio, also openable with ?key= from the radio's listen_path (a key for this one stream only) (one shared encoder, started by the first listener, stopped when the last leaves); sends an icy-name header
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
