@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 import { defineConfig } from "vite";
 
 // In dev the page is served by Vite and proxies the API (and its WebSocket) to the server,

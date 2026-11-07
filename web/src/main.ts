@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 import Webamp from "webamp";
 import type { Track as WebampTrack } from "webamp";
 import { Unauthorized, api, audioUrl, type Playlist, type SessionSnapshot, type Station, type Tool, type Track } from "./api";

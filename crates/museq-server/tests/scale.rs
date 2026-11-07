@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Scale checks on synthetic data. Not part of the normal run:
 //!   MUSEQ_SCALE_N=20000 cargo test --release --test scale -- --ignored --nocapture
 use axum::{

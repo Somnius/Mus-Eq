@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Threshold tuning on real audio. Not part of the normal test run: it needs a folder of files
 //! named `<set>-<n>__<variant>.<ext>` (`MUSEQ_TUNE_DIR`), where the part before `__` identifies
 //! one recording (so the same id means "same recording") and `<set>` groups recordings that

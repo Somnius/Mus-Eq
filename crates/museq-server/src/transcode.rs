@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! On-the-fly transcoding for `/v1/audio/{id}?codec=&kbps=`: one ffmpeg process per request,
 //! no shell, output streamed as it is produced. Transcoded answers have no Range support.
 use axum::body::Body;

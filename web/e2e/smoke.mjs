@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 // Headless smoke test of the built client against a real server.
 // Usage: MUSEQ_URL=http://127.0.0.1:8099 MUSEQ_TOKEN=... node e2e/smoke.mjs   (CHROMIUM=/usr/bin/chromium)
 import { chromium } from "playwright-core";

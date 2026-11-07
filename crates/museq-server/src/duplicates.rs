@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Finding the same recording more than once. Nothing here deletes a file: a merge only
 //! changes which track the files belong to.
 use axum::{

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Library radio: a station plays the owner's own tracks in a rotation, one encode shared by every
 //! listener. The encoder runs only while somebody listens.
 use axum::{

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! The fetch module, tested with a fake yt-dlp and a fake Spotify page. Nothing here touches the internet.
 use axum::{
     Router,

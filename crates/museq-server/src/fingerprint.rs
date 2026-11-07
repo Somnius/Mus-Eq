@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Audio fingerprints, computed in-process (no `fpcalc`). Used to find the same recording in
 //! different files, whatever the format or the tags say.
 use rusqlite::{Connection, params};

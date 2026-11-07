@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 // Thin typed wrapper over the MusEq HTTP API. The login cookie is sent automatically (same origin).
 
 export interface Track {

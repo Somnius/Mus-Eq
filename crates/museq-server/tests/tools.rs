@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! The tool installer: nothing is downloaded without the typed confirmation, the pinned SHA-256 decides
 //! what is accepted, and a failed install leaves nothing behind. A local server stands in for GitHub.
 

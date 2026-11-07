@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")

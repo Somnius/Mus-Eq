@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# SPDX-FileCopyrightText: 2026 Lef
 """Regenerates docs/THIRD_PARTY.md from Cargo.lock (via cargo metadata) and web/node_modules.
 
 Run from the repository root after `npm ci` in web/:  python3 scripts/gen-third-party.py

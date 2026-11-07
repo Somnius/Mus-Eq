@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 
 /// Lowercase, strip accents/diacritics (so Greek tonos and Latin accents don't matter)

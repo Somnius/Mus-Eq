@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Programs the server runs as separate processes (ffmpeg, yt-dlp). Mus-Eq never ships them.
 //!
 //! They are fetched on request, after an explicit typed confirmation, from a URL pinned in this release,

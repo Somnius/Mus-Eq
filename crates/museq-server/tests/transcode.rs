@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Transcoding through ffmpeg. Needs ffmpeg on PATH (the CI image and the container have it).
 use axum::{
     Router,

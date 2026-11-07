@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# SPDX-FileCopyrightText: 2026 Lef
 # Print what Mus-Eq is playing, for a status bar or widget. Needs curl and jq.
 #   now-playing.sh            -> "Artist - Title" (or nothing when stopped), exit 0
 #   now-playing.sh --json     -> a {text, tooltip, class} object (Waybar-style)

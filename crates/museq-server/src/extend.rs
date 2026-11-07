@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Playlist extension: when a playlist the owner built reaches its end, add tracks in the same
 //! style by artists that are not in it yet. The pool is the local library only: this never calls
 //! the network and never downloads anything.

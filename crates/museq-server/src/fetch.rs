@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Fetching a track into the library: one YouTube watch link, or one Spotify track link that is
 //! matched to a YouTube Music audio upload. OFF by default.
 //!

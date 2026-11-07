@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Bad input and crashes must never take the job queue or the server down.
 use axum::{
     Router,

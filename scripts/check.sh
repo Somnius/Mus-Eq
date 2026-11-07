@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# SPDX-FileCopyrightText: 2026 Lef
 # Full local check: fmt, clippy, Rust tests, web build, OpenAPI lint, headless-browser smoke test.
 # Keeps the machine under its CPU cap (24 of 32 threads, nice 10).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # keep the machine under its CPU cap: pin to 24 cores when there are that many, always nice
 if [ "$(nproc)" -ge 24 ]; then run() { taskset -c 0-23 nice -n 10 "$@"; }; else run() { nice -n 10 "$@"; }; fi
+python3 scripts/add-spdx.py --check
 run cargo fmt --all --check
 run cargo clippy --all-targets -- -D warnings
 run cargo test

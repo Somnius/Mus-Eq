@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 // Opt-in check against REAL radio streams in a real (headless) browser. Needs network; never run in CI.
 //   MUSEQ_URL=http://127.0.0.1:8099 MUSEQ_TOKEN=... node e2e/net-stations.mjs "Omarchy Radio" "Alpha 98.9"
 // The server must have the station lists imported. Prints one line per station.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2026 Lef
 //! Metadata suggestions. Candidates come from MusicBrainz (text search) and AcoustID (by audio,
 //! needs the owner's key). They are stored as candidates and only change a track when the owner
 //! accepts one, and then only in the database: the audio files are never rewritten.
