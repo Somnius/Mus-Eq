@@ -102,6 +102,9 @@ fn fingerprint_opus(path: &Path) -> Result<(Vec<u32>, i64), FpError> {
         let out = &pcm[skip * channels..end.max(skip) * channels];
         frames += (out.len() / channels) as u64;
         printer.consume(out);
+        if packet.last_in_stream() {
+            break; // a chained second stream is a different recording: only the first counts
+        }
     }
     if frames == 0 {
         return Err(FpError::Failed("no audio decoded".into()));

@@ -270,7 +270,7 @@ pub fn compare_new(db: &std::sync::Mutex<rusqlite::Connection>) -> (usize, usize
     let mut rows: Vec<Row> = {
         let conn = db::lock(db);
         let q = conn.prepare(
-            "SELECT f.id, COALESCE(f.duration_ms, 0), p.compared, p.data FROM fingerprint p
+            "SELECT f.id, COALESCE(p.duration_ms, f.duration_ms, 0), p.compared, p.data FROM fingerprint p
              JOIN file f ON f.id = p.file_id AND f.sha256 = p.sha256 WHERE p.status = 'ok'",
         );
         match q.and_then(|mut st| {
@@ -298,7 +298,7 @@ pub fn compare_new(db: &std::sync::Mutex<rusqlite::Connection>) -> (usize, usize
         .clamp(1, 4);
     let chunk = todo.len().div_ceil(threads);
     let rows_ref = &rows;
-    let edges: Vec<(i64, i64, f64)> = std::thread::scope(|scope| {
+    let edges: Option<Vec<(i64, i64, f64)>> = std::thread::scope(|scope| {
         let handles: Vec<_> = todo
             .chunks(chunk)
             .map(|part| {
@@ -330,14 +330,24 @@ pub fn compare_new(db: &std::sync::Mutex<rusqlite::Connection>) -> (usize, usize
                 })
             })
             .collect();
-        handles
-            .into_iter()
-            .flat_map(|h| h.join().unwrap_or_default())
-            .collect()
+        let mut all = Vec::new();
+        let mut ok = true;
+        for h in handles {
+            match h.join() {
+                Ok(v) => all.extend(v),
+                Err(_) => ok = false,
+            }
+        }
+        ok.then_some(all)
     });
+    // a crashed comparison thread: record nothing, so the next run does the work again
+    let Some(edges) = edges else {
+        eprintln!("compare_new: a comparison thread crashed; nothing stored, will retry");
+        return (0, 0);
+    };
     let mut conn = db::lock(db);
     let stored = edges.len();
-    let _ = (|| -> rusqlite::Result<()> {
+    let committed = (|| -> rusqlite::Result<()> {
         let tx = conn.transaction()?;
         for (a, b, score) in &edges {
             tx.execute(
@@ -353,6 +363,10 @@ pub fn compare_new(db: &std::sync::Mutex<rusqlite::Connection>) -> (usize, usize
         }
         tx.commit()
     })();
+    if let Err(e) = committed {
+        eprintln!("compare_new: could not store the comparisons: {e}");
+        return (0, 0);
+    }
     (todo.len(), stored)
 }
 

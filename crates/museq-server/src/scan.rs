@@ -17,7 +17,7 @@ use symphonia::core::meta::{MetadataOptions, StandardTag};
 /// Test hook: with `MUSEQ_TEST_HOOKS=1`, a file whose name contains a marker makes that stage panic
 /// on purpose, so the tests can prove a crash never wedges the job queue. Never set in production.
 pub fn test_hook(path: &str, marker: &str) {
-    if std::env::var_os("MUSEQ_TEST_HOOKS").is_some() && path.contains(marker) {
+    if std::env::var("MUSEQ_TEST_HOOKS").is_ok_and(|v| v == "1") && path.contains(marker) {
         panic!("test hook: {marker}");
     }
 }
@@ -243,6 +243,12 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
                         "UPDATE file SET sha256=?1, path=?7, bytes=?2, mtime=?3, codec=?4, duration_ms=?5,
                            sample_rate=?8, channels=?9, bitrate_kbps=?10, lossless=?11 WHERE id=?6",
                         params![sha, bytes, mtime, codec, p.duration_ms, id, rel, p.sample_rate, p.channels, bitrate_kbps, lossless],
+                    )?;
+                    // new content: comparisons made against the old audio no longer apply
+                    tx.execute(
+                        "DELETE FROM audio_match WHERE (a=?1 OR b=?1)
+                           AND EXISTS (SELECT 1 FROM fingerprint WHERE file_id=?1 AND sha256<>?2)",
+                        params![id, sha],
                     )?;
                     // the track follows its preferred file's tags
                     // a track the owner corrected keeps its corrected title, artist and album
