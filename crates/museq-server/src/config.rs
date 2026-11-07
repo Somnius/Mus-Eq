@@ -9,7 +9,8 @@ use std::path::PathBuf;
 /// - `MUSEQ_STATIONS_SEED` comma-separated paths of `Name|Category|URL` list files imported at startup (new stations only)
 /// - `MUSEQ_ACOUSTID_KEY` your AcoustID application key (identify tracks by audio; without it that stays off)
 /// - `MUSEQ_CONTACT` contact for the User-Agent sent to MusicBrainz (default: the project page)
-/// - `MUSEQ_MUSICBRAINZ_URL`, `MUSEQ_ACOUSTID_URL` override the service addresses (for testing)
+/// - `MUSEQ_MUSICBRAINZ_URL`, `MUSEQ_ACOUSTID_URL` override the service addresses (for testing; keep https in
+///   production, the AcoustID key travels in the query string)
 /// - `MUSEQ_ALLOW_PRIVATE_STATIONS` set to `1` to allow stations on loopback/private addresses (for radio on your own network)
 /// - `MUSEQ_WEB_DIR`  built web client to serve at `/` (optional)
 /// - `MUSEQ_TOKEN` or `MUSEQ_TOKEN_FILE`  the owner bearer token (required, at least 16 characters)

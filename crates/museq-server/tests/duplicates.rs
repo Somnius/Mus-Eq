@@ -381,3 +381,74 @@ async fn the_scanner_records_what_quality_ranking_needs() {
         "average bitrate of a 48 kbps file: {mp3_kbps:?}"
     );
 }
+
+#[tokio::test]
+async fn merging_keeps_the_owners_correction_and_pending_suggestions() {
+    let dir = tempfile::tempdir().unwrap();
+    copy_dir(&fixtures("dups"), dir.path());
+    let state = api::AppState::new(
+        db::open_in_memory().unwrap(),
+        dir.path().to_path_buf(),
+        TOKEN.into(),
+        PathBuf::from("."),
+        None,
+    );
+    let app = api::router(state.clone());
+    run_job(&app, "scan").await;
+    let (_, all) = call(&app, Method::GET, "/v1/tracks?limit=50", None).await;
+    let by_path = |p: &str| {
+        let fid: i64 = db::lock(&state.db)
+            .query_row("SELECT id FROM file WHERE path=?1", [p], |r| r.get(0))
+            .unwrap();
+        fid
+    };
+    let (flac, ogg) = (by_path("src1.flac"), by_path("src1.ogg"));
+    let _ = all;
+    {
+        // the owner corrected the ogg's track and left a suggestion pending on it
+        let c = db::lock(&state.db);
+        let ogg_track: i64 = c
+            .query_row("SELECT track_id FROM file WHERE id=?1", [ogg], |r| r.get(0))
+            .unwrap();
+        c.execute("UPDATE track SET title='My Own Title', artist='Me', corrected=1, search_text='my own title me' WHERE id=?1", [ogg_track]).unwrap();
+        c.execute("INSERT INTO candidate(track_id, source, score, title, mbid, created_at) VALUES(?1,'musicbrainz',90,'Suggestion','m1',1)", [ogg_track]).unwrap();
+    }
+    let (s, m) = call(&app, Method::POST, "/v1/duplicates/merge", Some(json!({"file_ids": [flac.to_string(), ogg.to_string()], "keep_file_id": flac.to_string()}))).await;
+    assert_eq!(s, StatusCode::OK, "{m}");
+    let tid = m["track_id"].as_str().unwrap();
+    let (_, t) = call(&app, Method::GET, &format!("/v1/tracks/{tid}"), None).await;
+    assert_eq!(
+        (t["title"].as_str(), t["artist"].as_str()),
+        (Some("My Own Title"), Some("Me")),
+        "the correction must survive the merge: {t}"
+    );
+    let (_, c) = call(
+        &app,
+        Method::GET,
+        &format!("/v1/tracks/{tid}/candidates"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        c["items"].as_array().unwrap().len(),
+        1,
+        "the pending suggestion moved to the kept track: {c}"
+    );
+    assert_eq!(
+        call(&app, Method::GET, "/v1/tracks?q=my%20own", None)
+            .await
+            .1["total"],
+        1,
+        "search follows"
+    );
+}
+
+#[tokio::test]
+async fn tracks_carry_their_genre() {
+    let dir = tempfile::tempdir().unwrap();
+    copy_dir(&fixtures("dups"), dir.path());
+    let app = app_for(dir.path());
+    run_job(&app, "scan").await;
+    let (_, r) = call(&app, Method::GET, "/v1/tracks?q=noise%20two", None).await;
+    assert_eq!(r["items"][0]["genre"], "Ambient", "{r}");
+}

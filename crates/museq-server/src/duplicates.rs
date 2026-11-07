@@ -291,6 +291,25 @@ pub async fn merge(State(s): State<AppState>, Json(b): Json<MergeBody>) -> Respo
             .filter(|t| *t != target)
             .collect();
         for t in &losers {
+            // The owner's work is not lost: if the kept track was never corrected but an absorbed
+            // one was, its corrected tags win; pending suggestions move to the kept track.
+            let target_corrected: i64 =
+                tx.query_row("SELECT corrected FROM track WHERE id=?1", [target], |r| {
+                    r.get(0)
+                })?;
+            if target_corrected == 0 {
+                tx.execute(
+                    "UPDATE track SET title=l.title, artist=l.artist, album=l.album, mbid=l.mbid,
+                       search_text=l.search_text, corrected=1
+                     FROM (SELECT title, artist, album, mbid, search_text FROM track WHERE id=?2 AND corrected=1) AS l
+                     WHERE track.id=?1",
+                    params![target, t],
+                )?;
+            }
+            tx.execute(
+                "UPDATE OR IGNORE candidate SET track_id=?1 WHERE track_id=?2",
+                params![target, t],
+            )?;
             tx.execute(
                 "UPDATE file SET track_id=?1 WHERE track_id=?2",
                 params![target, t],

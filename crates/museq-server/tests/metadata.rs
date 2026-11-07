@@ -462,3 +462,117 @@ fn replies_are_parsed_defensively() {
     );
     assert_eq!(c[0].artist.as_deref(), Some("A, B"));
 }
+
+#[tokio::test]
+async fn accepting_a_sparse_candidate_never_blanks_existing_tags() {
+    // a recording with a title but no artist and no release
+    let sparse = json!({"recordings": [{"id": "mbid-9", "score": 95, "title": "Only A Title"}]});
+    let (base, _) = fake_service(200, sparse, json!({})).await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        fixtures("lib").join("sub/beta.mp3"),
+        dir.path().join("beta.mp3"),
+    )
+    .unwrap(); // has artist and album, no genre
+    let st = api::AppState::new(
+        db::open_in_memory().unwrap(),
+        dir.path().to_path_buf(),
+        TOKEN.into(),
+        PathBuf::from("."),
+        None,
+    )
+    .services(services(&base, None));
+    let app = api::router(st.clone());
+    run_job(&app, json!({"kind": "scan"})).await;
+    let tid = first_track(&app).await["id"].as_str().unwrap().to_string();
+    // the owner names the track explicitly, so it is asked about even though its tags are fine
+    let r = run_job(&app, json!({"kind": "tag", "track_ids": [tid]})).await;
+    assert_eq!(r["candidates_stored"], 1, "{r}");
+    let c = call(
+        &app,
+        Method::GET,
+        &format!("/v1/tracks/{tid}/candidates"),
+        None,
+    )
+    .await
+    .1;
+    assert_eq!(c["items"][0]["mbid"], "mbid-9");
+    let cid = c["items"][0]["id"].as_str().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/v1/candidates/{cid}/accept"),
+            None
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let t = first_track(&app).await;
+    assert_eq!(
+        (
+            t["title"].as_str(),
+            t["artist"].as_str(),
+            t["album"].as_str()
+        ),
+        (Some("Only A Title"), Some("Artist Two"), Some("Second")),
+        "missing fields keep the track's own values: {t}"
+    );
+    // asking about a corrected track by name is allowed, and too long a list is refused
+    assert_eq!(
+        run_job(&app, json!({"kind": "tag", "track_ids": [tid]})).await["tracks_asked"],
+        1
+    );
+    let many: Vec<String> = (0..1001).map(|i| i.to_string()).collect();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/v1/jobs",
+            Some(json!({"kind": "tag", "track_ids": many}))
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn the_acoustid_key_never_appears_in_results_or_errors() {
+    let (base, _) = fake_service(
+        200,
+        json!({"recordings": []}),
+        json!({"status": "error", "error": {"message": "invalid API key"}}),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        fixtures("dups").join("src1.flac"),
+        dir.path().join("a.flac"),
+    )
+    .unwrap();
+    let key = "SECRETKEY-1234567890";
+    let app = app_for(dir.path(), services(&base, Some(key)));
+    run_job(&app, json!({"kind": "scan"})).await;
+    run_job(&app, json!({"kind": "fingerprint"})).await;
+    let tid = first_track(&app).await["id"].as_str().unwrap().to_string();
+    let r = run_job(&app, json!({"kind": "tag", "track_ids": [tid.clone()]})).await;
+    assert_eq!(r["lookups_failed"], 1, "{r}");
+    assert!(
+        !r.to_string().contains(key),
+        "job result leaked the key: {r}"
+    );
+    let (s, body) = call(
+        &app,
+        Method::POST,
+        &format!("/v1/tracks/{tid}/identify"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_GATEWAY);
+    assert!(
+        !body.to_string().contains(key),
+        "error body leaked the key: {body}"
+    );
+}

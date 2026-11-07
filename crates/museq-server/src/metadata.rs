@@ -259,7 +259,7 @@ fn store(conn: &Connection, track: i64, cands: &[Candidate]) -> usize {
             .execute(
                 "INSERT INTO candidate(track_id, source, score, title, artist, album, year, mbid, created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
                  ON CONFLICT(track_id, source, mbid) DO NOTHING",
-                params![track, c.source, c.score, c.title, c.artist, c.album, c.year, c.mbid, now()],
+                params![track, c.source, c.score, c.title, c.artist, c.album, c.year, c.mbid.clone().unwrap_or_default(), now()],
             )
             .unwrap_or(0);
     }
@@ -273,7 +273,8 @@ pub async fn run_tag_job(s: AppState, only: Option<Vec<i64>>) -> Value {
     let tracks: Vec<(i64, String, Option<String>)> = {
         let conn = db::lock(&s.db);
         let sql = match &only {
-            Some(_) => "SELECT id, title, artist FROM track WHERE corrected = 0 ORDER BY id",
+            // tracks the owner names are asked about even if they were corrected before
+            Some(_) => "SELECT id, title, artist FROM track ORDER BY id",
             None => {
                 "SELECT id, title, artist FROM track WHERE corrected = 0 AND (artist IS NULL OR artist = '' OR album IS NULL OR album = '') ORDER BY id"
             }
@@ -356,7 +357,7 @@ fn candidate_from_row(r: &rusqlite::Row) -> rusqlite::Result<CandidateRow> {
         artist: r.get(5)?,
         album: r.get(6)?,
         year: r.get(7)?,
-        mbid: r.get(8)?,
+        mbid: r.get::<_, Option<String>>(8)?.filter(|s| !s.is_empty()),
         status: r.get(9)?,
     })
 }
@@ -421,10 +422,23 @@ pub async fn accept(State(s): State<AppState>, Path(id): Path<i64>) -> Response 
             return Ok(Some((track, format!("already {status}"))));
         }
         let title = title.unwrap_or_default();
-        let search = crate::db::search_text(&title, artist.as_deref(), album.as_deref());
+        // a candidate that lacks a field must not blank what the track already has
         tx.execute(
-            "UPDATE track SET title=?1, artist=?2, album=?3, mbid=?4, search_text=?5, corrected=1 WHERE id=?6",
-            params![title, artist, album, mbid, search, track],
+            "UPDATE track SET title=COALESCE(NULLIF(?1,''), title), artist=COALESCE(NULLIF(?2,''), artist),
+               album=COALESCE(NULLIF(?3,''), album), mbid=NULLIF(?4,''), corrected=1 WHERE id=?5",
+            params![title, artist, album, mbid, track],
+        )?;
+        let (t2, a2, b2): (String, Option<String>, Option<String>) = tx.query_row(
+            "SELECT title, artist, album FROM track WHERE id=?1",
+            [track],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        tx.execute(
+            "UPDATE track SET search_text=?1 WHERE id=?2",
+            params![
+                crate::db::search_text(&t2, a2.as_deref(), b2.as_deref()),
+                track
+            ],
         )?;
         tx.execute("UPDATE candidate SET status='accepted' WHERE id=?1", [id])?;
         tx.execute(

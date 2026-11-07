@@ -144,7 +144,7 @@ paths:
     post:
       tags: [library]
       operationId: acceptCandidate
-      summary: Apply a candidate to its track in the database (title, artist, album). Audio files are never rewritten, and a rescan keeps the correction.
+      summary: Apply a candidate to its track in the database (title, artist, album; a field the candidate lacks keeps the track's value). Audio files are never rewritten, and a rescan keeps the correction.
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
@@ -536,12 +536,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Job" }
         "409":
-          description: A scan is already running
+          description: The same kind of job is already running (scan and fingerprint also exclude each other)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "400": { description: "Unknown job kind", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "501": { description: "Job kind not implemented", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "403":
           description: Job kind disabled by configuration
           content:

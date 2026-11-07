@@ -8,7 +8,7 @@ Status and exit checks only; behavior is in `SPEC.md`, choices in `DECISIONS.md`
 | 1a | Server core: config, token, SQLite, scan, tracks, range audio | done |
 | 1b | Web client (Webamp), session + WebSocket | done (pushed, CI green) |
 | 2 | Stations (external list, passthrough) | done (pushed, CI green) |
-| 3 | Metadata, duplicates, fetch, playlist extension | todo |
+| 3 | Metadata, duplicates, extension, fetch (3a-3d) | 3a-3c built and reviewed, 3d blocked on Q2 |
 | 4 | Native clients + offline (Android, desktop) | todo |
 | 5 | Library radio + transcoding | todo |
 | 6 | Live phone radio (mic, ducking, mixer) | todo |
@@ -95,6 +95,9 @@ Exit met on fakes: a mistagged file shows a candidate and changes only on accept
 - [x] Tests: 6 server tests (rules, accents, rotation, genre weight, API behaviour) and a browser test (a one-track playlist ends, grows by 3 tracks by new artists, playback carries on). Webamp needed an explicit "select the first new track and play" after the end: "next" alone did not restart it
 - [ ] Not verified: how the choice feels on a real library (the pick is deterministic and rotates, with no similarity beyond the genre tag); libraries without genre tags get no extension (the reason is shown); artists are matched by tag text only (no MusicBrainz ids yet)
 Exit met on fixtures: a short playlist grows by N tracks with no repeated artist.
+
+### Review of 3a-3c (2026-11-07)
+Two independent reviews and a separate full check run (48 tests then, 53 now, all 20 browser checks). No code path deletes or rewrites an audio file; every new route is behind auth; the AcoustID key stays out of errors and results (now pinned by a test). Fixed: migrations are atomic per step (a failed step changes nothing, tested); merge keeps the owner's corrections and moves pending suggestions; accepting a sparse candidate no longer blanks artist or album; suggestions without an id no longer pile up; tracks expose their genre; `tag` on named tracks includes corrected ones and is capped at 1000 ids; SPEC data model and job rules corrected. Accepted and noted: `/v1/duplicates` compares in memory (fine for a home library, not verified at scale); `tag` is bounded only by the MusicBrainz rate limit.
 
 ### 3d: fetch (blocked on Q2)
 - [ ] Not started and no download code until Q2 is answered. Stays behind the config flag, off by default; the terms of YouTube, Spotify and Deezer are read by the owner first.

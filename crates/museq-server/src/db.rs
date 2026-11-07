@@ -65,37 +65,62 @@ pub fn open_in_memory() -> rusqlite::Result<Connection> {
     init(Connection::open_in_memory()?)
 }
 
+/// Run one migration step atomically: either all of its statements and the new `user_version`
+/// are stored, or none are, so a failure halfway never leaves a database that cannot start again.
+fn step(conn: &Connection, to: i64, sql: &str) -> rusqlite::Result<()> {
+    conn.execute_batch(&format!(
+        "BEGIN IMMEDIATE;\n{sql}\nPRAGMA user_version = {to};\nCOMMIT;"
+    ))
+    .inspect_err(|_| {
+        let _ = conn.execute_batch("ROLLBACK");
+    })
+}
+
 fn init(conn: Connection) -> rusqlite::Result<Connection> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if version < 1 {
-        conn.execute_batch(SCHEMA_V1)?;
-        conn.pragma_update(None, "user_version", 1)?;
+        step(&conn, 1, SCHEMA_V1)?;
     }
     if version < 2 {
         // Accent- and case-insensitive search text (SQLite LIKE only folds ASCII case).
-        conn.execute_batch("ALTER TABLE track ADD COLUMN search_text TEXT NOT NULL DEFAULT '';")?;
-        let rows: Vec<(i64, String, Option<String>, Option<String>)> = conn
-            .prepare("SELECT id, title, artist, album FROM track")?
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-            .collect::<rusqlite::Result<_>>()?;
-        for (id, title, artist, album) in rows {
-            conn.execute(
-                "UPDATE track SET search_text=?1 WHERE id=?2",
-                rusqlite::params![search_text(&title, artist.as_deref(), album.as_deref()), id],
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let migrated = (|| -> rusqlite::Result<()> {
+            conn.execute_batch(
+                "ALTER TABLE track ADD COLUMN search_text TEXT NOT NULL DEFAULT '';",
             )?;
+            let rows: Vec<(i64, String, Option<String>, Option<String>)> = conn
+                .prepare("SELECT id, title, artist, album FROM track")?
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (id, title, artist, album) in rows {
+                conn.execute(
+                    "UPDATE track SET search_text=?1 WHERE id=?2",
+                    rusqlite::params![search_text(&title, artist.as_deref(), album.as_deref()), id],
+                )?;
+            }
+            conn.execute_batch("PRAGMA user_version = 2;")
+        })();
+        match migrated {
+            Ok(()) => conn.execute_batch("COMMIT")?,
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
         }
-        conn.pragma_update(None, "user_version", 2)?;
     }
     if version < 3 {
-        conn.execute_batch(
+        step(
+            &conn,
+            3,
             "CREATE TABLE skin(id TEXT PRIMARY KEY, name TEXT NOT NULL, bytes INTEGER NOT NULL);",
         )?;
-        conn.pragma_update(None, "user_version", 3)?;
     }
     if version < 4 {
-        conn.execute_batch(
+        step(
+            &conn,
+            4,
             "CREATE TABLE station(
                id INTEGER PRIMARY KEY AUTOINCREMENT,
                name TEXT NOT NULL,
@@ -108,12 +133,13 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
                error TEXT
              );",
         )?;
-        conn.pragma_update(None, "user_version", 4)?;
     }
     if version < 5 {
         // One track can own several files (duplicates merged by the owner), and files now carry
         // the facts needed to rank their quality. Every file is re-probed on the next scan.
-        conn.execute_batch(
+        step(
+            &conn,
+            5,
             "ALTER TABLE file ADD COLUMN track_id INTEGER REFERENCES track(id) ON DELETE SET NULL;
              ALTER TABLE file ADD COLUMN sample_rate INTEGER;
              ALTER TABLE file ADD COLUMN channels INTEGER;
@@ -132,12 +158,10 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
                data BLOB
              );",
         )?;
-        conn.pragma_update(None, "user_version", 5)?;
     }
     if version < 6 {
         // Suggested metadata. A track the owner corrected keeps its corrected tags on rescans.
-        conn.execute_batch(
-            "ALTER TABLE track ADD COLUMN corrected INTEGER NOT NULL DEFAULT 0;
+        step(&conn, 6, "ALTER TABLE track ADD COLUMN corrected INTEGER NOT NULL DEFAULT 0;
              ALTER TABLE track ADD COLUMN mbid TEXT;
              CREATE TABLE candidate(
                id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,9 +172,7 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
                status TEXT NOT NULL DEFAULT 'pending',   -- pending | accepted | rejected | superseded
                created_at INTEGER NOT NULL,
                UNIQUE(track_id, source, mbid)
-             );",
-        )?;
-        conn.pragma_update(None, "user_version", 6)?;
+             );")?;
     }
     // A job left "running" by a crash will never finish.
     conn.execute("UPDATE job SET state='failed', error='interrupted by restart' WHERE state IN ('queued','running')", [])?;
@@ -160,6 +182,40 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A migration that fails halfway must leave the database exactly as it was.
+    #[test]
+    fn a_failed_migration_step_changes_nothing() {
+        let dir = std::env::temp_dir().join(format!("museq-mig-fail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("half.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA_V1).unwrap();
+            conn.execute_batch(
+                "ALTER TABLE track ADD COLUMN search_text TEXT NOT NULL DEFAULT '';
+                 CREATE TABLE skin(id TEXT PRIMARY KEY, name TEXT NOT NULL, bytes INTEGER NOT NULL);
+                 CREATE TABLE station(id INTEGER PRIMARY KEY, name TEXT, category TEXT, url TEXT, source TEXT, search_text TEXT, alive INTEGER, checked_at INTEGER, error TEXT);
+                 ALTER TABLE file ADD COLUMN sample_rate INTEGER;", // v5 will trip over this one
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", 4).unwrap();
+        }
+        assert!(open(&path).is_err(), "the broken step must fail loudly");
+        let conn = Connection::open(&path).unwrap();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 4, "the version must not move");
+        let has_track_id = conn.prepare("SELECT track_id FROM file LIMIT 1").is_ok();
+        assert!(
+            !has_track_id,
+            "statements before the failing one must be rolled back too"
+        );
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A database created by the first release, with a track in a playlist, must come through
     /// every later migration with its data and get the new structure.

@@ -291,9 +291,11 @@ pub(crate) struct Track {
     album: Option<String>,
     duration_ms: Option<i64>,
     preferred_file_id: String,
+    genre: Option<String>,
 }
 
-pub(crate) const TRACK_COLS: &str = "id, title, artist, album, duration_ms, preferred_file_id";
+pub(crate) const TRACK_COLS: &str =
+    "id, title, artist, album, duration_ms, preferred_file_id, genre";
 
 pub(crate) fn track_from_row(r: &rusqlite::Row) -> rusqlite::Result<Track> {
     Ok(Track {
@@ -303,6 +305,7 @@ pub(crate) fn track_from_row(r: &rusqlite::Row) -> rusqlite::Result<Track> {
         album: r.get(3)?,
         duration_ms: r.get(4)?,
         preferred_file_id: r.get::<_, i64>(5)?.to_string(),
+        genre: r.get(6)?,
     })
 }
 
@@ -639,6 +642,12 @@ struct NewJob {
 }
 
 async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Response {
+    if body.track_ids.as_ref().is_some_and(|v| v.len() > 1000) {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "track_ids may name at most 1000 tracks",
+        );
+    }
     let kind = match body.kind.as_str() {
         k @ ("scan" | "check_stations" | "fingerprint" | "tag") => k.to_string(),
         "fetch" => {

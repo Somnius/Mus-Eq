@@ -34,7 +34,7 @@ phone "radio uplink" (Ogg/Opus over HTTP chunks, WebRTC later) --> radio(live)
 | Transcode | **ffmpeg subprocess in the image** (MP3/AAC need it); in-process Opus (`opus`+`ogg`+`rubato`+`symphonia`) is an optional path, decided at the start of phase 5 by a measured test (one station, one core) | see "Audio lessons" |
 | Radio out | Icecast-compatible chunked HTTP stream | seconds of latency, fine for radio |
 | Fetch | yt-dlp subprocess behind a config flag, **off by default** | legal gate, see Risks |
-| Metadata | MusicBrainz + Discogs (tags), AcoustID/Chromaprint via `fpcalc` subprocess (identify, dedupe) | AcoustID: 3 req/s, non-commercial, app key (checked); MusicBrainz ~1 rps and Discogs ~60/min [unverified] |
+| Metadata | MusicBrainz + Discogs (tags), AcoustID (identify) with fingerprints computed in-process in Rust (`rusty-chromaprint`, no `fpcalc`) | AcoustID: 3 req/s, non-commercial, app key (checked); MusicBrainz ~1 rps and Discogs ~60/min [unverified] |
 | Web | TypeScript/Vite + Webamp (MIT, checked in its `package.json`) for the classic skin | don't call the product "Winamp" |
 | Desktop | Browser first. A native shell (Tauri/`wry` around Webamp, or Qt Quick) is open: Q13, decided at phase 4 | cliamp is only an optional existing client |
 | Android | Kotlin, Media3/ExoPlayer, `mediaPlayback` foreground service; mic radio = second service (`microphone` type) | skin = Webamp in a WebView for v1 (Q5) |
@@ -42,8 +42,7 @@ phone "radio uplink" (Ogg/Opus over HTTP chunks, WebRTC later) --> radio(live)
 
 ## Data model (SQLite)
 `file(id, track_id, sha256, path, bytes, codec, bitrate_kbps, sample_rate, channels, lossless, duration_ms)` (one track can own several files; `track.preferred_file_id` is the one played) · `fingerprint(file_id, sha256, status ok|unsupported|error, duration_ms, data)` ·
-`track(id, title, artist_id, album_id, mbid, acoustid, chromaprint, preferred_file_id, quality_score, source_kind, source_ref)` + `track_file(track_id, file_id, quality_rank)` ·
-`artist`, `album` ·
+`track(id, title, artist, album, genre, duration_ms, mbid, corrected, preferred_file_id, search_text)` (artist and album are text columns for now; a file belongs to a track through `file.track_id`) · `candidate(id, track_id, source, score, title, artist, album, year, mbid, status)` ·
 `playlist(id, name, kind user|generated|extension, seed_genres, extend BOOL)` + `playlist_item(playlist_id, position, track_id)` ·
 `station(id, name, kind, category, url, codec, bitrate, schedule_json, source manual|omarchy|radiobrowser|trayfm)` ·
 `job(id, kind scan|fetch|tag|fingerprint, payload JSON, state, attempts, result JSON, error)` (one table for every background job) ·
@@ -55,10 +54,10 @@ Rules: byte identity = sha256. Song identity for dedupe = fingerprint (later); u
 ## API conventions (the contract is `docs/openapi.yaml`)
 - JSON over HTTP; one WebSocket (`/v1/events`) for session and job events.
 - Audio ids are **file ids**. Playlists and the session refer to track ids; the server picks the track's preferred file.
-- `POST /v1/jobs` with `kind` scan|check_stations|fetch|tag|fingerprint; `fetch` answers 403 unless enabled in config; one job of a kind at a time (409 otherwise).
+- `POST /v1/jobs` with `kind` scan|check_stations|fetch|tag|fingerprint; `fetch` answers 403 unless enabled in config; one job of a kind at a time (409 otherwise); `scan` and `fingerprint` also exclude each other.
 - Station addresses: a station URL must be http(s) with a host and no credentials. By default loopback, private, link-local (including the cloud metadata address), carrier-grade NAT and unique-local addresses are refused, both when adding a station and in every hop of the liveness check (redirects are followed by hand, at most 3, within one 10 s deadline). Radio on your own network needs `MUSEQ_ALLOW_PRIVATE_STATIONS=1`. Limit: a name is resolved again when connecting, so a hostile DNS server could answer differently the second time; stations are added by the owner only.
 - Errors are `{ "error": "message" }` with a normal HTTP status, including unknown `/v1/...` paths. Malformed ids or bodies that axum rejects before our code runs (a non-numeric `{id}`, invalid JSON) still answer with its plain-text 400/422.
-- Duplicates (`GET /v1/duplicates`, `POST /v1/duplicates/merge`): identical bytes are found by hash, the same recording in different files by an in-process Chromaprint fingerprint (job `fingerprint`, two files at a time, never together with a scan). A merge joins files under one track in SQLite only: no file is ever deleted or rewritten, and playlist entries follow. Opus cannot be fingerprinted yet (Symphonia has no Opus decoder); such files get status `unsupported`.
+- Duplicates (`GET /v1/duplicates`, `POST /v1/duplicates/merge`): identical bytes are found by hash, the same recording in different files by an in-process Chromaprint fingerprint (job `fingerprint`, two files at a time, never together with a scan). A merge joins whole tracks (every file a named file's track owns comes along) in SQLite only; the owner's corrected tags and pending suggestions of an absorbed track are kept: no file is ever deleted or rewritten, and playlist entries follow. Opus cannot be fingerprinted yet (Symphonia has no Opus decoder); such files get status `unsupported`.
 - Metadata (`tag` job, `GET /v1/tracks/{id}/candidates`, `POST /v1/tracks/{id}/identify`, `POST /v1/candidates/{id}/accept|reject`): MusicBrainz text search for tracks with a missing artist or album (1 request per second, descriptive User-Agent, one shared rate limiter for all jobs), and AcoustID by audio when the owner supplies an application key (`MUSEQ_ACOUSTID_KEY`; 501 without it). Answers become **candidates**; accepting one changes the track in the database only (never the audio file) and marks the track corrected so rescans keep it. CI and tests only ever talk to fake servers.
 - Playlist extension (`POST /v1/playlists/{id}/extend`): tracks that share a genre with the playlist (heavier genres first, accent- and case-insensitive), by an artist who is not in it yet, one track per new artist, from the local library only; when nothing qualifies it says so and adds nothing. It never calls the network. The web client calls it when Webamp reaches the end of a playlist that has "extend" switched on, appends the tracks and plays on.
 - Implemented so far: health, login/logout, tracks, audio (Range), playlists, scan jobs, session + events, skins, stations (list, add, delete, liveness check job, remote play), fingerprint job, duplicates (list, merge), metadata candidates (MusicBrainz, AcoustID), playlist extension. Search is case- and accent-insensitive (Greek tonos and final sigma fold) through a `search_text` column.
@@ -71,7 +70,7 @@ Rules: byte identity = sha256. Song identity for dedupe = fingerprint (later); u
 |---|---|
 | 1 | server binary only (symphonia reads tags and durations; library path and token via env/config) |
 | 2 | `data/stations/` seed lists (shipped in the image, imported at startup) |
-| 3 | `fpcalc`, `yt-dlp` (pinned, flag off by default) |
+| 3 | nothing for fingerprints, duplicates, suggestions and extension (all in-process Rust); `yt-dlp` (pinned, flag off by default) only with 3d |
 | 5 | `ffmpeg` (apt or a pinned LGPL build with checksum) |
 | 6 | nothing new (libopus decode in-process) |
 
@@ -89,7 +88,7 @@ Modern `.wal` skins, lyrics, scrobbling, multi-tenant hosting, iOS, DRM sources,
 
 ## Risks
 - **Legal/ToS:** yt-dlp on YouTube, Spotify/Deezer APIs as a back door, re-streaming Greek stations. Mitigation: fetch flag off by default, personal use, passthrough for external stations, no credentials shipped. The owner must read the three sites' terms before phase 3 enables fetch; a summary is not that reading.
-- **Fingerprinting:** Chromaprint/`fpcalc` server-side for dedupe (no API). Naming a song from audio = AcoustID. No official Android Chromaprint build found [unverified]; phone-side later. Chromaprint's own licence is unverified (use the FFmpeg-based build).
+- **Fingerprinting:** Chromaprint-style fingerprints computed in-process in Rust, server-side, for dedupe (no API). Naming a song from audio = AcoustID. No official Android Chromaprint build found [unverified]; phone-side later. Chromaprint's own licence is unverified (use the FFmpeg-based build).
 - **Android:** foreground services, audio focus, OEM battery killers; needs a real-handset test. Ducking our own music under our mic is a gain on our mixer bus.
 - **Skin parity**, **yt-dlp breakage** (pin + self-update + health check), **CPU** (one encoder per station, 80% cap).
 - **Licences:** cliamp MIT (Bjarne Øverli), Webamp MIT (checked; the licence of its bundled base skin is not), Tray-FM station list Unlicense.
