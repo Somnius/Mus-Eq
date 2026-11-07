@@ -28,6 +28,25 @@ class MainActivity : Activity() {
     private var tracks = listOf<Track>()
     private lateinit var status: TextView
     private lateinit var list: ListView
+    private lateinit var battery: Button
+
+    private fun unrestricted() =
+        (getSystemService(POWER_SERVICE) as android.os.PowerManager).isIgnoringBatteryOptimizations(packageName)
+
+    override fun onResume() {
+        super.onResume()
+        battery.text = if (unrestricted()) "Background playback: allowed" else "Allow background playback (battery)"
+    }
+
+    // Android's battery optimisation can stop a playing app after a while with the screen off.
+    // OnePlus adds its own limits too; those are in Settings > Apps > Mus-Eq > Battery.
+    private fun allowBackground() {
+        val i = if (!unrestricted())
+            android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+        else
+            android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        startActivity(i)
+    }
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -44,7 +63,9 @@ class MainActivity : Activity() {
         val go = Button(this).apply { text = "Connect and search" }
         status = TextView(this)
         list = ListView(this)
-        listOf(url, tok, q, go, status, list).forEach { root.addView(it) }
+        battery = Button(this)
+        battery.setOnClickListener { allowBackground() }
+        listOf(url, tok, q, go, battery, status, list).forEach { root.addView(it) }
         setContentView(root)
         go.setOnClickListener {
             val base = url.text.toString().trim()
