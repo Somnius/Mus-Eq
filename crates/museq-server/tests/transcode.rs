@@ -139,6 +139,7 @@ async fn each_codec_produces_real_audio_of_that_kind() {
 #[tokio::test]
 async fn a_transcode_is_audibly_the_same_recording() {
     if !have_ffmpeg() {
+        eprintln!("ffmpeg missing: skipped");
         return;
     }
     // fingerprint the opus transcode and compare with the original's: it must match
@@ -148,7 +149,6 @@ async fn a_transcode_is_audibly_the_same_recording() {
     let out = dir.path().join("t.opus");
     std::fs::write(&out, &bytes).unwrap();
     let (a, _) = museq_server::fingerprint::fingerprint_file(&out).expect("transcode decodes");
-    let lib = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dups");
     let (_, _, orig) = raw(&app, &format!("/v1/audio/{fid}")).await;
     let ext = if orig.starts_with(b"fLaC") {
         "flac"
@@ -159,7 +159,6 @@ async fn a_transcode_is_audibly_the_same_recording() {
     };
     let o = dir.path().join(format!("o.{ext}"));
     std::fs::write(&o, &orig).unwrap();
-    let _ = lib;
     let (b, _) = museq_server::fingerprint::fingerprint_file(&o).unwrap();
     let c = museq_server::duplicates::compare(&a, &b).expect("comparable");
     assert!(

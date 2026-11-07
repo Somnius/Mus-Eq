@@ -431,6 +431,19 @@ async fn audio(
         return err(StatusCode::NOT_FOUND, "no such file");
     };
     if let Some((codec, kbps)) = wanted {
+        if req.method() == axum::http::Method::HEAD {
+            // headers only: never start ffmpeg for a HEAD request
+            let mime = match codec {
+                crate::transcode::Codec::Opus => "audio/ogg",
+                crate::transcode::Codec::Mp3 => "audio/mpeg",
+                crate::transcode::Codec::Aac => "audio/aac",
+            };
+            return ([
+                (header::CONTENT_TYPE, mime),
+                (header::ACCEPT_RANGES, "none"),
+            ])
+            .into_response();
+        }
         let permit = match s.transcodes.clone().try_acquire_owned() {
             Ok(p) => p,
             Err(_) => {

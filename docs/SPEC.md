@@ -16,7 +16,7 @@ museq-server (one container, one process)
 phone "radio uplink" (Ogg/Opus over HTTP chunks, WebRTC later) --> radio(live)
 ```
 - The server owns the catalog and jobs. A phone cache is a replica with a sync cursor, never a second library.
-- Playing a stored file is a byte stream (`/v1/audio/{file_id}`, Range supported). Transcoding (`codec`, `kbps`) only when a client asks; until phase 5 the server ignores or refuses it (501), it never silently re-encodes.
+- Playing a stored file is a byte stream (`/v1/audio/{file_id}`, Range supported). Transcoding (`codec`, `kbps`) only when a client asks; ffmpeg re-encodes on the fly (opus, mp3, aac; no Range; two at a time); the server never transcodes on its own.
 - Radio has `kind = external | library | live`. **External stations are never proxied**: `/v1/stations` returns the upstream URL and the client plays it (no re-streaming, avoids licensing trouble, no load on the server). `/v1/radio/{id}.{ext}` exists only for library and live stations.
 - Mic, ducking and mixer live on the phone (the mic is there); the server receives an already-mixed stream.
 - One global playback session: fine for one listener; per-device sessions come later if needed.

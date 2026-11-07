@@ -41,7 +41,7 @@ impl Codec {
 }
 
 /// Stream `path` re-encoded. The file path is passed as one argument after `-i`; a leading `-`
-/// is neutralised by making the path absolute.
+/// is neutralised by making the path absolute first.
 pub fn stream<G: Send + 'static>(
     ffmpeg: &str,
     path: &Path,
@@ -50,9 +50,10 @@ pub fn stream<G: Send + 'static>(
     guard: G,
 ) -> Response {
     let (enc, container, mime) = codec.args();
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let mut cmd = tokio::process::Command::new(ffmpeg);
     cmd.args(["-nostdin", "-v", "error", "-i"])
-        .arg(path)
+        .arg(&path)
         .args(["-vn", "-map_metadata", "-1", "-c:a", enc, "-b:a"])
         .arg(format!("{kbps}k"))
         .args(["-f", container, "pipe:1"])
