@@ -64,6 +64,8 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         // file_type() does not follow symlinks, so a link can't send the scan outside the library
         match e.file_type() {
+            // fetch's half-finished downloads live in ".work-*" folders: never catalogue them
+            Ok(t) if t.is_dir() && e.file_name().to_string_lossy().starts_with(".work-") => {}
             Ok(t) if t.is_dir() => walk(&p, out),
             Ok(t) if t.is_file() && is_audio(&p) => out.push(p),
             _ => {}

@@ -516,6 +516,7 @@ async fn download(
     let url = format!("https://music.youtube.com/watch?v={video_id}"); // built here, never the owner's text
     let mut args: Vec<String> = [
         "--no-playlist",
+        "-q",
         "--no-warnings",
         "--socket-timeout",
         "30",
@@ -654,6 +655,14 @@ pub async fn run(app: AppState, source: Source) -> Result<Value, String> {
     // 3. download into a private work folder under the inbox
     std::fs::create_dir_all(&app.fetch.inbox)
         .map_err(|e| format!("cannot create the inbox: {e}"))?;
+    // leftovers of a crashed run (fetch jobs never overlap, so none of these is live)
+    if let Ok(rd) = std::fs::read_dir(&app.fetch.inbox) {
+        for e in rd.flatten() {
+            if e.file_name().to_string_lossy().starts_with(".work-") {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+    }
     let work = app
         .fetch
         .inbox
