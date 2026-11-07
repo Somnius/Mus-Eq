@@ -12,7 +12,7 @@
 
 A self-hosted music server and player. One headless server (Docker or Podman) holds your library, serves it over one API, and thin clients talk to it. The web player uses Webamp, so the first skin is the classic Winamp look. An Android app exists in an early form (see below); desktop clients are planned, not built yet.
 
-**Status: early, still changing.** The server and the web player work. We have tried them on localhost and in a headless browser, not yet across a LAN, with Podman or on a large library. Phases 0 to 3d and most of phase 5 (library radio, transcoding) of the [roadmap](docs/ROADMAP.md) are built, and phase 4 (clients) is partly done: an early Android app, no desktop client. Fetching single tracks exists but is off by default and has only been tested against fakes, never against the real services.
+**Status: early, still changing.** The server and the web player work. We have tried them on localhost, in a headless browser, and from one phone over a home network; not yet with Podman or on a large library. Phases 0 to 3d and most of phase 5 (library radio, transcoding) of the [roadmap](docs/ROADMAP.md) are built, and phase 4 (clients) is partly done: an early Android app, no desktop client. Fetching single tracks exists but is off by default and has only been tested against fakes, never against the real services.
 
 ## What works today
 
