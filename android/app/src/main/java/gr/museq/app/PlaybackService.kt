@@ -31,7 +31,9 @@ class PlaybackService : MediaSessionService() {
                 if (same) spec.withAdditionalHeaders(mapOf("Authorization" to "Bearer " + Prefs.token(this))) else spec
             })
         val player = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(ResolvingDataSource.Factory(
+                DefaultDataSource.Factory(this, http),
+                ResolvingDataSource.Resolver { spec -> resolveTrack(spec) })))
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
@@ -39,6 +41,16 @@ class PlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         session = MediaSession.Builder(this, player).build()
+    }
+
+    /** museq://track/<fileId> becomes the pinned file if there is one, otherwise the server's audio route. */
+    private fun resolveTrack(spec: androidx.media3.datasource.DataSpec): androidx.media3.datasource.DataSpec {
+        val u = spec.uri
+        if (u.scheme != "museq" || u.host != "track") return spec
+        val id = u.lastPathSegment ?: return spec
+        val target = if (Pins.isPinned(this, id)) Uri.fromFile(Pins.file(this, id))
+                     else Uri.parse(Prefs.base(this) + "/v1/audio/" + id)
+        return spec.withUri(target)
     }
 
     override fun onGetSession(info: MediaSession.ControllerInfo) = session

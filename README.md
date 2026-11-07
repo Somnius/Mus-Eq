@@ -10,9 +10,9 @@
 <!-- stack:end -->
 </p>
 
-A self-hosted music server and player. One headless server (Docker or Podman) holds your library, serves it over one API, and thin clients talk to it. The web player uses Webamp, so the first skin is the classic Winamp look. Native clients are planned, not built yet.
+A self-hosted music server and player. One headless server (Docker or Podman) holds your library, serves it over one API, and thin clients talk to it. The web player uses Webamp, so the first skin is the classic Winamp look. An Android app exists in an early form (see below); desktop clients are planned, not built yet.
 
-**Status: early, still changing.** The server and the web player work. We have tried them on localhost and in a headless browser, not yet across a LAN, with Podman or on a large library. Phases 0 to 3d of the [roadmap](docs/ROADMAP.md) are built. Native Android and desktop clients are not built. Fetching single tracks exists but is off by default and has only been tested against fakes, never against the real services. No licence has been chosen yet.
+**Status: early, still changing.** The server and the web player work. We have tried them on localhost and in a headless browser, not yet across a LAN, with Podman or on a large library. Phases 0 to 3d and most of phase 5 (library radio, transcoding) of the [roadmap](docs/ROADMAP.md) are built, and phase 4 (clients) is partly done: an early Android app, no desktop client. Fetching single tracks exists but is off by default and has only been tested against fakes, never against the real services. No licence has been chosen yet.
 
 ## What works today
 
@@ -23,12 +23,14 @@ A self-hosted music server and player. One headless server (Docker or Podman) ho
 - Metadata suggestions: MusicBrainz search for tracks with missing tags, and AcoustID lookup if you bring your own key. A suggestion changes the database only when you accept it; audio files are never rewritten
 - Radio stations: a station list (a Greek list is included in `data/stations/`) with search and a liveness check, played in the browser
 - A control API, described in `docs/openapi.yaml`, so widgets and other apps can drive the player
+- Android app (early, in `android/`): search, playlists, library radios and stations, background playback with lock-screen controls, and offline pins that are checked against the server's size and SHA-256. See "Android app" below
+- A radio made from your own files, and transcoding to opus, mp3 or aac (needs ffmpeg on the server)
 
 ## What is planned
 
-- Native clients for Android, Windows and Linux, with offline storage on the device
+- Native clients for Windows and Linux; the Android app is early (see below)
 - Fetching playlists and albums (single tracks exist, see below)
-- A radio made from your own files, transcoding, and a live channel from a phone's mic
+- A live channel from a phone's mic
 - Discogs tag suggestions, a web page for duplicates and suggestions (API only for now), and more skins
 
 ## Try what exists
@@ -78,11 +80,30 @@ Then `GET /v1/fetch/status` tells you whether it is on (and if not, why), and `P
 
 This has been tested only against a fake `yt-dlp` and a fake Spotify page. No real request to either service has been made from this code yet, so the first real run may find something the fakes did not.
 
+## Android app
+
+An early debug build, built from `android/`. It has been tried on one phone (a OnePlus 13) over a home network, not on others.
+
+```
+cd android
+./gradlew :app:assembleDebug          # needs JDK 17 and the Android SDK (platform 36)
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Open the app, enter the server address and the owner token, and tap "Connect and search". Tap a track to play it. Long-press a track to pin it for offline use, or long-press a playlist to pin all of it. "Check pinned copies" on the Pinned view compares each stored file with the size and SHA-256 the server recorded at its last library scan, and downloads again any that differ (the old copy stays until the new one checks out). If a file in your library was replaced and not rescanned, its numbers are stale until you scan again.
+
+- **Battery:** on many phones the system stops a playing app after a while with the screen off. Tap "Allow background playback" in the app and allow it. On OnePlus also set Settings, Apps, Mus-Eq, Battery to unrestricted; the app cannot change that one. With the exemption on, one run played about 35 minutes with the screen off before it was cut short for an unrelated reason; a full hour has not been run.
+- **HTTP and HTTPS:** the app accepts both. With plain `http://` the owner token travels unencrypted, so use it on a trusted network only and the app says so. For HTTPS put a reverse proxy that terminates TLS in front of the server; that has not been tried against a real certificate.
+- **Redirects:** downloads and API calls never follow a redirect. The player does follow one, so if a proxy in front of the server ever redirected a stream to a different host, the token would go along with the request. The server itself does not redirect.
+- **Token storage:** the token is kept in the app's private preferences, not encrypted.
+- Not built yet: skins, a polished interface, the live mic channel. Offline pins have no change manifest beyond the check above.
+
 ## Layout
 
 ```
 crates/museq-server/   the server (Rust, axum)
 web/                   the web client (TypeScript, Vite, Webamp)
+android/               the Android app (Kotlin, Media3)
 docs/                  spec, roadmap, decisions, openapi.yaml
 data/stations/         radio station lists (credit inside)
 scripts/               checks and helper scripts

@@ -25,6 +25,7 @@ class MainActivity : Activity() {
     private var rows = listOf<Row>()
     private var tracks = listOf<Track>() // the tracks behind the rows when the list is a track list
     private var view = "library"
+    private var gen = 0 // bumped whenever the visible view changes; a slow job from an older view is dropped
     private lateinit var status: TextView
     private lateinit var list: ListView
     private lateinit var query: EditText
@@ -106,8 +107,11 @@ class MainActivity : Activity() {
         }
     }
 
+    /** True if the screen still shows the view a background job started in. */
+    private fun still(v: String) = view == v
+
     private fun open(v: String) {
-        view = v
+        view = v; gen++
         when (v) {
             "library" -> library(query.text.toString())
             "lists" -> playlists()
@@ -123,18 +127,21 @@ class MainActivity : Activity() {
         (if (t.artist.isEmpty()) "" else t.artist + " – ") + t.title
 
     // always called on the UI thread, so the list the user taps and the list the code indexes are the same one
-    private fun showTracks(l: List<Track>, header: List<Row> = emptyList()) {
-        tracks = l
-        showRows(header + l.map { t -> Row(label(t), { play(t) }, { togglePin(t) }) })
+    // the header rows (for example "back to lists") are remembered, so redrawing after a pin keeps them
+    private var header = listOf<Row>()
+    private fun showTracks(l: List<Track>, h: List<Row> = header) {
+        tracks = l; header = h
+        showRows(h + l.map { t -> Row(label(t), { play(t) }, { togglePin(t) }) })
     }
 
     private fun library(q: String) {
         val app = applicationContext
+        val g = gen
         background("searching…") {
             val j = Api.obj(app, "/v1/tracks?limit=200&q=" + Api.enc(q))
             val a = j.getJSONArray("items")
             val found = (0 until a.length()).map { Parse.track(a.getJSONObject(it)) }
-            ui { status.text = "${found.size} of ${j.getInt("total")} tracks" + plainHttpNote(); showTracks(found) }
+            ui { if (g != gen) return@ui; status.text = "${found.size} of ${j.getInt("total")} tracks" + plainHttpNote(); showTracks(found, emptyList()) }
         }
     }
 
@@ -143,10 +150,12 @@ class MainActivity : Activity() {
 
     private fun playlists() {
         val app = applicationContext
+        val g = gen
         background("loading lists…") {
             val a = Api.arr(app, "/v1/playlists")
             val items = (0 until a.length()).map { a.getJSONObject(it) }
             ui {
+                if (g != gen) return@ui
                 status.text = "${items.size} lists; tap to open, long-press to pin all its tracks"
                 showRows(items.map { p ->
                     val n = p.optJSONArray("track_ids")?.length() ?: 0
@@ -157,19 +166,23 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun playlistTracks(app: android.content.Context, id: String): List<Entry> {
+    /** The playlist's tracks in order, and how many of its ids the server no longer has. */
+    private fun playlistTracks(app: android.content.Context, id: String): Pair<List<Entry>, Int> {
         val ids = Api.obj(app, "/v1/playlists/$id").getJSONArray("track_ids")
         val order = (0 until ids.length()).map { ids.getString(it) }
         val (entries, _) = Api.manifest(app, order)
         val byId = entries.associateBy { it.track.id }
-        return order.mapNotNull { byId[it] }
+        val found = order.mapNotNull { byId[it] }
+        return found to (order.size - found.size)
     }
 
     private fun openPlaylist(id: String, name: String) {
         val app = applicationContext
+        view = "playlist:$id"; gen++
+        val g = gen
         background("opening $name…") {
-            val e = playlistTracks(app, id)
-            ui { status.text = "$name: ${e.size} tracks"
+            val (e, dropped) = playlistTracks(app, id)
+            ui { if (g != gen) return@ui; status.text = "$name: ${e.size} tracks" + (if (dropped > 0) ", $dropped no longer on the server" else "")
                 showTracks(e.map { it.track }, listOf(Row("‹ back to lists", { playlists() }))) }
         }
     }
@@ -177,34 +190,54 @@ class MainActivity : Activity() {
     private fun pinPlaylist(id: String, name: String) {
         val app = applicationContext
         background("pinning $name…") {
-            val entries = playlistTracks(app, id)
-            var failed = 0
+            val (entries, dropped) = playlistTracks(app, id)
+            var downloaded = 0; var present = 0; var busy = 0; var failed = 0
             entries.forEachIndexed { i, e ->
-                if (!Pins.matches(app, e)) {
+                // a file already here with the right size is kept as it is; "Check pinned copies" does the full hash
+                if (Pins.isPinned(app, e.track.fileId) && Pins.file(app, e.track.fileId).length() == e.bytes) present++
+                else {
                     ui { status.text = "$name: pinning ${i + 1} of ${entries.size}" }
-                    if (Pins.pin(app, e) { _, _ -> } != null) failed++
+                    when (Pins.pin(app, e) { _, _ -> }) {
+                        null -> downloaded++
+                        "already downloading" -> busy++
+                        else -> failed++
+                    }
                 }
             }
-            ui { status.text = "$name: ${entries.size - failed} of ${entries.size} tracks pinned" +
-                (if (failed > 0) ", $failed failed (long-press the list again to retry)" else "") }
+            ui { status.text = "$name: $downloaded downloaded and checked, $present already there (size only)" +
+                (if (busy > 0) ", $busy still downloading from an earlier request" else "") +
+                (if (failed > 0) ", $failed failed (long-press the list again to retry)" else "") +
+                (if (dropped > 0) ", $dropped no longer on the server" else "") }
         }
     }
 
     private fun togglePin(t: Track) {
         if (Pins.isBusy(t.fileId)) { status.text = "already downloading"; return }
-        if (Pins.isPinned(this, t.fileId)) { Pins.unpin(this, t); status.text = "unpinned"; showTracks(tracks); return }
+        if (Pins.isPinned(this, t.fileId)) {
+            Pins.unpin(this, t); status.text = "unpinned"
+            if (view == "pinned") pinned() else showTracks(tracks)
+            return
+        }
         val app = applicationContext
+        val v = view
+        val gv = gen
         background("pinning…") {
             val e = Api.manifest(app, listOf(t.id)).first.firstOrNull() ?: throw RuntimeException("track not on the server")
             var last = 0L
             val err = Pins.pin(app, e) { d, tot ->
                 if (System.currentTimeMillis() - last > 500) { last = System.currentTimeMillis()
                     ui { status.text = "pinning " + Parse.sizeLabel(d, tot) } } }
-            ui { status.text = if (err == null) "pinned" else "pin failed: $err"; showTracks(tracks) }
+            ui {
+                status.text = if (err == null) "pinned" else "pin failed: $err"
+                // use the server's current track/file for this row, which a rescan or merge may have changed
+                if (err == null) tracks = tracks.map { if (it.id == e.track.id) e.track else it }
+                if (still(v) && gv == gen) showTracks(tracks)
+            }
         }
     }
 
     private fun pinned() {
+        view = "pinned"; gen++
         val all = Pins.all(this)
         status.text = "${all.size} pinned; long-press to unpin"
         showTracks(all, listOf(Row("Check pinned copies against the server", { verifyPins() })))
@@ -213,6 +246,7 @@ class MainActivity : Activity() {
     /** Compares every pinned file with the size and SHA-256 the server names; a differing copy is downloaded again. */
     private fun verifyPins() {
         val app = applicationContext
+        val g = gen
         background("checking pinned copies…") {
             val mine = Pins.all(app)
             val (entries, missing) = Api.manifest(app, mine.map { it.id })
@@ -220,12 +254,19 @@ class MainActivity : Activity() {
             entries.forEachIndexed { i, e ->
                 if (Pins.matches(app, e)) ok++ else {
                     ui { status.text = "re-downloading ${i + 1} of ${entries.size}" }
-                    Pins.unpin(app, e.track)
-                    if (Pins.pin(app, e) { _, _ -> } == null) fixed++ else failed++
+                    // the old copy stays until the new one has passed the size and hash check
+                    if (Pins.pin(app, e) { _, _ -> } == null) {
+                        fixed++
+                        // the server now plays a different file for this track: drop the pin of the old one
+                        mine.firstOrNull { it.id == e.track.id && it.fileId != e.track.fileId }?.let { Pins.unpin(app, it) }
+                    } else failed++
                 }
             }
-            ui { status.text = "$ok identical, $fixed re-downloaded, $failed failed, ${missing.size} no longer on the server"
-                pinned().also { status.text = status.text } }
+            ui {
+                if (g == gen) pinned()
+                status.text = "$ok identical, $fixed re-downloaded, $failed failed, ${missing.size} no longer on the server" +
+                    (if (fixed > 0) " (a track that is playing keeps its old copy until it starts again)" else "")
+            }
         }
     }
 
@@ -233,9 +274,11 @@ class MainActivity : Activity() {
 
     private fun radios() {
         val app = applicationContext
+        val g = gen
         background("loading radios…") {
             val a = Api.arr(app, "/v1/radios")
             ui {
+                if (g != gen) return@ui
                 status.text = "${a.length()} library radios; tap to listen"
                 showRows((0 until a.length()).map { a.getJSONObject(it) }.map { r ->
                     Row("${r.getString("name")} · ${r.getString("codec")} ${r.getInt("kbps")} k · ${r.getInt("listeners")} listening",
@@ -247,10 +290,12 @@ class MainActivity : Activity() {
 
     private fun stations(q: String) {
         val app = applicationContext
+        val g = gen
         background("loading stations…") {
             val j = Api.obj(app, "/v1/stations?limit=200&q=" + Api.enc(q))
             val a = j.getJSONArray("items")
             ui {
+                if (g != gen) return@ui
                 status.text = "${a.length()} of ${j.getInt("total")} stations; tap to listen"
                 showRows((0 until a.length()).map { a.getJSONObject(it) }.map { s ->
                     val alive = if (s.isNull("alive")) "" else if (s.getBoolean("alive")) "" else " (down?)"
@@ -262,9 +307,9 @@ class MainActivity : Activity() {
 
     // ---- playing --------------------------------------------------------------------------
 
-    private fun uriOf(t: Track): Uri =
-        if (Pins.isPinned(this, t.fileId)) Uri.fromFile(Pins.file(this, t.fileId))
-        else Uri.parse(Prefs.base(this) + "/v1/audio/" + t.fileId)
+    // the queue names a track as museq://track/<fileId>; the service picks the pinned file or the server
+    // when that track opens, so unpinning a queued track does not break the queue
+    private fun uriOf(t: Track): Uri = Uri.parse("museq://track/" + t.fileId)
 
     private fun controller(then: (MediaController) -> Unit) {
         val f = controllerFuture ?: MediaController.Builder(this,

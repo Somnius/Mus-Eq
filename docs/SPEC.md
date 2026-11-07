@@ -16,6 +16,7 @@ museq-server (one container, one process)
 phone "radio uplink" (Ogg/Opus over HTTP chunks, WebRTC later) --> radio(live)
 ```
 - The server owns the catalog and jobs. A phone cache is a replica with a sync cursor, never a second library.
+- Offline pins: `GET /v1/tracks/manifest?ids=` (up to 500 ids) returns, per track, the `file_id`, `bytes` and `sha256` of the file that plays (unknown ids in `missing`; numbers come from the last library scan). The Android client downloads with Range (resumable), keeps a pin only when size and hash match, and re-downloads differing copies on "Check pinned copies".
 - Playing a stored file is a byte stream (`/v1/audio/{file_id}`, Range supported). Transcoding (`codec`, `kbps`) only when a client asks; ffmpeg re-encodes on the fly (opus, mp3, aac; no Range; two at a time); the server never transcodes on its own.
 - Radio has `kind = external | library | live`. **External stations are never proxied**: `/v1/stations` returns the upstream URL and the client plays it (no re-streaming, avoids licensing trouble, no load on the server). `/v1/radio/{id}.{ext}` exists only for library and live stations.
 - Mic, ducking and mixer live on the phone (the mic is there); the server receives an already-mixed stream.
@@ -37,7 +38,7 @@ phone "radio uplink" (Ogg/Opus over HTTP chunks, WebRTC later) --> radio(live)
 | Metadata | MusicBrainz + Discogs (tags), AcoustID (identify) with fingerprints computed in-process in Rust (`rusty-chromaprint`, no `fpcalc`) | AcoustID: 3 req/s, non-commercial, app key (checked); MusicBrainz ~1 rps and Discogs ~60/min [unverified] |
 | Web | TypeScript/Vite + Webamp (MIT, checked in its `package.json`) for the classic skin | don't call the product "Winamp" |
 | Desktop | Browser first. A native shell (Tauri/`wry` around Webamp, or Qt Quick) is open: Q13, decided at phase 4 | cliamp is only an optional existing client |
-| Android | Kotlin, Media3/ExoPlayer, `mediaPlayback` foreground service; mic radio = second service (`microphone` type) | skin = Webamp in a WebView for v1 (Q5) |
+| Android | Kotlin, Media3/ExoPlayer, `mediaPlayback` foreground service; mic radio = second service (`microphone` type). Built: plain views, queue of `museq://track/<fileId>` items resolved to the pinned file or the server when opened, token sent only to the configured server host, battery-exemption request; token stored unencrypted in app preferences, HTTPS accepted but not tested with a real certificate | skin = Webamp in a WebView for v1 (Q5), not built yet |
 | Deploy | Docker/Podman, Compose, Caddy optional | phone-as-server = same binary, later |
 
 ## Data model (SQLite)
