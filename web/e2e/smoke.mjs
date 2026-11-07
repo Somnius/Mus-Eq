@@ -155,6 +155,21 @@ const list = await (await fetch(`${base}/v1/stations?limit=50`, { headers: auth 
 const byName = Object.fromEntries(list.items.map((s) => [s.name, s]));
 check(dead.status === 201 && byName["Smoke Test FM"]?.alive === true && byName["Dead FM"]?.alive === false, `the check marks the live station alive and the dead one dead (${byName["Dead FM"]?.error})`);
 
+// Programs panel: both tools are listed, and the full download message is on the page before anything is downloaded.
+const toolRows = await page.$$eval("#tools-list li.tool", (els) => els.map((e) => e.dataset.tool));
+check(toolRows.includes("ffmpeg") && toolRows.includes("yt-dlp"), `the Programs panel lists ffmpeg and yt-dlp (${toolRows.join(", ")})`);
+const toolList = await (await fetch(`${base}/v1/tools`, { headers: auth })).json();
+const ff = toolList.find((t) => t.name === "ffmpeg");
+check(ff && ff.confirm_phrase.startsWith("install ffmpeg ") && (ff.message === null || /Nothing is downloaded until you confirm/.test(ff.message)), "the tools API carries the confirmation phrase and message");
+const refused = await fetch(`${base}/v1/tools/ffmpeg/install`, { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: "{}" });
+check(refused.status === 400 || refused.status === 403, `an install without the confirmation phrase is refused (HTTP ${refused.status})`);
+if (ff?.found === "missing" && ff.platform_supported) {
+  await page.click("#tools summary");
+  await page.click('#tools-list li[data-tool="ffmpeg"] summary');
+  const shown = await page.textContent('#tools-list li[data-tool="ffmpeg"] .tool-msg');
+  check(/Nothing is downloaded until you confirm/.test(shown ?? ""), "the page shows the full download message before the button");
+}
+
 const relevant = errors.filter((e) => !/favicon|Failed to load resource.*(404|401)/.test(e));
 check(relevant.length === 0, `no console/page errors${relevant.length ? ": " + relevant.join(" | ") : ""}`);
 await browser.close();

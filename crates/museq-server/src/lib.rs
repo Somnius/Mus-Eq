@@ -12,4 +12,5 @@ pub mod session;
 pub mod skins;
 pub mod stations;
 pub mod text;
+pub mod tools;
 pub mod transcode;

@@ -16,6 +16,14 @@ export interface Station { id: string; name: string; category: string; url: stri
 export interface Playlist { id: string; name: string; extend: boolean; track_ids: string[] }
 export interface Extension { added: Track[]; pool_empty: boolean; reason?: string }
 
+export interface ToolProgress { phase: string; downloaded: number; total: number; error: string | null }
+export interface Tool {
+  name: string; purpose: string; version: string; licence: string; homepage: string; notes: string;
+  platform_supported: boolean; source_url: string | null; download_bytes: number | null; sha256: string | null;
+  found: "installed" | "modified" | "configured" | "system" | "missing"; path: string | null;
+  message: string | null; confirm_phrase: string; progress: ToolProgress;
+}
+
 export class Unauthorized extends Error {}
 
 async function req(method: string, path: string, body?: unknown, raw?: BodyInit): Promise<Response> {
@@ -63,6 +71,10 @@ export const api = {
   uploadSkin: (name: string, file: File) => req("POST", `/v1/skins?name=${encodeURIComponent(name)}`, undefined, file).then((r) => json<Skin>(r)),
   scan: () => req("POST", "/v1/jobs", { kind: "scan" }).then((r) => json<{ id: string }>(r)),
   job: (id: string) => req("GET", `/v1/jobs/${id}`).then((r) => json<{ state: string; result: Record<string, number> | null; error: string | null }>(r)),
+  tools: () => req("GET", "/v1/tools").then((r) => json<Tool[]>(r)),
+  // the phrase is sent only when the owner clicked the button under the message that names it
+  installTool: (name: string, confirm: string) => req("POST", `/v1/tools/${encodeURIComponent(name)}/install`, { confirm }).then((r) => json<Tool>(r)),
+  removeTool: async (name: string) => { const r = await req("DELETE", `/v1/tools/${encodeURIComponent(name)}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
   report: (body: Record<string, unknown>) => req("POST", "/v1/session", { action: "report", ...body }),
 };
 

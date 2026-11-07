@@ -7,14 +7,14 @@ package's own LICENSE file before relying on a line here.
 
 ## Rust crates (everything in `Cargo.lock`, including build and test tools)
 
-257 packages. By declared licence:
+262 packages. By declared licence:
 
-- 129 x `MIT OR Apache-2.0`
+- 131 x `MIT OR Apache-2.0`
 - 41 x `MIT`
 - 18 x `Unicode-3.0`
 - 16 x `MPL-2.0`
 - 11 x `Apache-2.0 OR MIT`
-- 6 x `MIT/Apache-2.0`
+- 9 x `MIT/Apache-2.0`
 - 5 x `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT`
 - 3 x `Unlicense OR MIT`
 - 3 x `Apache-2.0 OR ISC OR MIT`
@@ -46,6 +46,8 @@ Notes:
   bundles some LGPL-2.1 FFmpeg code; the port uses the `rustfft` and `rubato` crates instead, and its source never
   mentions FFmpeg. That is evidence, not a legal conclusion.
 - **libopus** is compiled from source by the `opus` crate. Its licence (BSD-3-Clause upstream) was not re-checked here.
+- **lzma-sys** (used by `xz2` to unpack the downloaded `.tar.xz`) compiles the C source of the xz/liblzma library into the
+  server. That library's own licence (public domain or 0BSD upstream) was not checked here.
 - Two crates offer `MIT OR Apache-2.0 OR LGPL-2.1-or-later`; Mus-Eq takes the MIT or Apache-2.0 option.
 
 <details><summary>Full Rust list</summary>
@@ -90,6 +92,7 @@ Notes:
 | fallible-iterator | 0.3.0 | MIT/Apache-2.0 |
 | fallible-streaming-iterator | 0.1.9 | MIT/Apache-2.0 |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT |
+| filetime | 0.2.29 | MIT/Apache-2.0 |
 | find-msvc-tools | 0.1.15 | MIT OR Apache-2.0 |
 | foldhash | 0.2.0 | Zlib |
 | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 |
@@ -141,6 +144,7 @@ Notes:
 | litemap | 0.8.3 | Unicode-3.0 |
 | log | 0.4.35 | MIT OR Apache-2.0 |
 | lru-slab | 0.1.3 | MIT OR Apache-2.0 OR Zlib |
+| lzma-sys | 0.1.20 | MIT/Apache-2.0 |
 | matchit | 0.8.4 | MIT AND BSD-3-Clause |
 | memchr | 2.8.3 | Unlicense OR MIT |
 | mime | 0.3.18 | MIT OR Apache-2.0 |
@@ -238,6 +242,7 @@ Notes:
 | syn | 3.0.9 | MIT OR Apache-2.0 |
 | sync_wrapper | 1.0.2 | Apache-2.0 |
 | synstructure | 0.14.0 | MIT |
+| tar | 0.4.46 | MIT OR Apache-2.0 |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 |
 | thiserror-impl | 2.0.21 | MIT OR Apache-2.0 |
@@ -298,6 +303,8 @@ Notes:
 | windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 |
 | wit-bindgen | 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | writeable | 0.6.4 | Unicode-3.0 |
+| xattr | 1.7.0 | MIT OR Apache-2.0 |
+| xz2 | 0.1.7 | MIT/Apache-2.0 |
 | yoke | 0.8.4 | Unicode-3.0 |
 | yoke-derive | 0.8.4 | Unicode-3.0 |
 | zerocopy | 0.8.62 | BSD-2-Clause OR Apache-2.0 OR MIT |
@@ -332,8 +339,13 @@ are used only in the unit tests. A Gradle licence report has not been generated 
 
 ## Other
 
-- **ffmpeg** is used as a separate program (transcoding, library radio). The container image installs the
-  distribution's `ffmpeg` package; its licence travels with that package (often GPL, depending on the build, which
-  was not checked). Anyone publishing an image has to meet that package's licence and source obligations.
-- **yt-dlp** is not shipped. When the off-by-default fetch feature is enabled it runs a copy the owner installs.
+- **ffmpeg** and **yt-dlp** are not shipped, in the repository or in the container image. The server downloads them
+  on request after a typed confirmation, from addresses and SHA-256 values pinned in `crates/museq-server/src/tools.rs`
+  (see "Programs Mus-Eq downloads" in the README). They run as separate programs, not linked into Mus-Eq.
+  - ffmpeg n8.1.3: a build by the BtbN project (`autobuild-2026-10-31-12-59`, the `lgpl` variant). It is configured
+    with `--enable-version3` and without `--enable-gpl`, which makes it LGPL-3.0-or-later; that wording follows
+    FFmpeg's published rules and was only partly checked against ffmpeg.org/legal.html.
+  - yt-dlp 2026.10.26: Unlicense. The single-file Linux build also bundles Python and other components under their
+    own licences, which have not been reviewed here.
+  - Whoever downloads them receives them under those licences; Mus-Eq does not redistribute them.
 - **Radio station list**: Tray-FM by Constantinos (Unlicense), `data/stations/trayfm-stations.txt`.

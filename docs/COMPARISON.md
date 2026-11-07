@@ -12,7 +12,7 @@ That gap is the reason Mus-Eq exists. The usual answer today is a stack: a serve
 
 - **No licence file = all rights reserved.** We may read it and learn from it, never copy code.
 - **MIT, Apache-2.0, Unlicense:** may be depended on or copied, keeping the notice.
-- **GPL / AGPL:** ideas only, unless Mus-Eq itself adopts a compatible licence (open question Q14). Copying GPL/AGPL code into an MIT or unlicensed project is not allowed.
+- **GPL / AGPL:** ideas only, unless Mus-Eq itself adopts a compatible licence (Q14 is decided: MIT OR Apache-2.0, so GPL/AGPL code cannot be copied). Copying GPL/AGPL code into an MIT or unlicensed project is not allowed.
 - Running or calling a separate program (yt-dlp, ffmpeg, `fpcalc`) is different from copying its code, but check that program's own licence and terms.
 - Station lists, skins and metadata services have their own terms (see the SPEC risks).
 
@@ -79,7 +79,7 @@ To keep that clean:
 ## Next
 
 - [x] In-depth comparison chart (features, API compatibility, clients, fetch, tagging, dedupe, radio, skins, offline, maturity, licence), built from the per-project analysis.
-- [ ] Decide Mus-Eq's own licence (Q14) with the table above in mind.
+- [x] Decide Mus-Eq's own licence (Q14): MIT OR Apache-2.0, decided 2026-11-07 (see DECISIONS.md).
 - [ ] Pick the few ideas worth borrowing per phase (library, stations, metadata, fingerprinting, clients).
 
 ## In-depth comparison
@@ -138,9 +138,9 @@ Only facts the research found:
 - **Some features are narrower than described.** Harmony's duplicate detection uses ids, names and duration, not audio fingerprints. RE-KORD has no fingerprinting. Octo verifies downloads but does not de-duplicate a whole library. Ariami has no Subsonic API, so third-party clients cannot connect to it. Melodee needs PostgreSQL. Spotify-based tools such as Psst need a paid account and now a user-supplied developer client id.
 - **Unverified items remain**: dual licence of Tauri, "or later" for the ListenBrainz server, the licence of a Spotify library under cliamp, extra bundled licences inside yt-dlp, licence names of Ampache and stash files, and the endpoint list of the OpenSubsonic README (the spec itself was read in the tree).
 
-## Licence decision summary for Mus-Eq (Q14 stays open)
+## Licence decision summary for Mus-Eq (Q14 decided: MIT OR Apache-2.0)
 
-The decision is not taken here. The research gives these trade-offs for a self-hosted project:
+The decision was taken on 2026-11-07 and is recorded in `DECISIONS.md`; this table is the research it drew on. The research gives these trade-offs for a self-hosted project:
 
 | Licence for Mus-Eq | Pros | Cons |
 |---|---|---|

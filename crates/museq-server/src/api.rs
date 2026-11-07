@@ -38,12 +38,20 @@ pub struct AppState {
     pub services: Arc<crate::metadata::Services>,
     pub limiters: Arc<crate::metadata::Limiters>,
     pub fetch: Arc<crate::fetch::FetchConfig>,
-    /// ffmpeg for transcoding (`MUSEQ_FFMPEG`, default `ffmpeg` from PATH).
-    pub ffmpeg: Arc<String>,
+    /// External programs (ffmpeg, yt-dlp): found, or installed on request after a confirmation.
+    pub tools: Arc<crate::tools::Tools>,
     /// Running library radios.
     pub radios: crate::radio::Hubs,
     /// At most this many transcodes at once.
     pub transcodes: Arc<tokio::sync::Semaphore>,
+}
+
+/// A folder name nobody else can guess, for callers that never set a tools folder (tests); `main` always does.
+fn unique_tools_dir() -> PathBuf {
+    let mut b = [0u8; 8];
+    let _ = getrandom::fill(&mut b);
+    let tag: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    std::env::temp_dir().join(format!("museq-tools-{}-{tag}", std::process::id()))
 }
 
 const COOKIE_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
@@ -74,15 +82,41 @@ impl AppState {
             services: Arc::new(crate::metadata::Services::default()),
             limiters: Arc::new(crate::metadata::Limiters::default()),
             fetch: Arc::new(crate::fetch::FetchConfig::default()),
-            ffmpeg: Arc::new("ffmpeg".into()),
+            tools: Arc::new(crate::tools::Tools::builtin(unique_tools_dir())),
             radios: Default::default(),
             transcodes: Arc::new(tokio::sync::Semaphore::new(2)),
         }
     }
 
-    pub fn ffmpeg(mut self, path: String) -> Self {
-        self.ffmpeg = Arc::new(path);
+    /// Use this ffmpeg instead of any downloaded one or the one on PATH.
+    pub fn ffmpeg(self, path: String) -> Self {
+        self.tools.set_explicit("ffmpeg", path);
         self
+    }
+
+    pub fn tools(mut self, tools: crate::tools::Tools) -> Self {
+        self.tools = Arc::new(tools);
+        self
+    }
+
+    /// Like `tools`, for a caller that keeps its own handle (tests).
+    pub fn tools_shared(mut self, tools: Arc<crate::tools::Tools>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    /// The yt-dlp the fetch feature runs: the path named by `MUSEQ_FETCH_YTDLP`, else the copy Mus-Eq installed.
+    /// It is never looked up on PATH.
+    pub fn ytdlp_path(&self) -> Option<PathBuf> {
+        if !self.fetch.ytdlp.as_os_str().is_empty() {
+            return Some(self.fetch.ytdlp.clone());
+        }
+        self.tools.installed_binary("yt-dlp")
+    }
+
+    /// The ffmpeg to run: the configured one, else the installed one, else `ffmpeg` from PATH.
+    pub fn ffmpeg_path(&self) -> String {
+        self.tools.resolve("ffmpeg")
     }
 
     pub fn fetch(mut self, cfg: crate::fetch::FetchConfig) -> Self {
@@ -116,6 +150,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tracks/manifest", get(tracks_manifest))
         .route("/v1/tracks/{id}", get(get_track))
         .route("/v1/audio/{file_id}", get(audio))
+        .route("/v1/tools", get(list_tools))
+        .route("/v1/tools/{name}", axum::routing::delete(remove_tool))
+        .route("/v1/tools/{name}/install", post(install_tool))
         .route("/v1/playlists", get(list_playlists).post(create_playlist))
         .route(
             "/v1/playlists/{id}",
@@ -544,7 +581,7 @@ async fn audio(
                 );
             }
         };
-        return crate::transcode::stream(&s.ffmpeg, &s.root.join(rel), codec, kbps, permit);
+        return crate::transcode::stream(&s.ffmpeg_path(), &s.root.join(rel), codec, kbps, permit);
     }
     // ServeFile answers Range requests, ETag/Last-Modified and the content type.
     match ServeFile::new(s.root.join(rel)).oneshot(req).await {
@@ -801,6 +838,12 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
                 let why = s.fetch.disabled_reason.clone().unwrap_or_default();
                 return err(StatusCode::FORBIDDEN, &format!("fetch is off: {why}"));
             }
+            if s.ytdlp_path().is_none() {
+                return err(
+                    StatusCode::CONFLICT,
+                    "fetch needs yt-dlp, which is not installed: install it from the Programs panel (GET /v1/tools) or set MUSEQ_FETCH_YTDLP",
+                );
+            }
             "fetch".to_string()
         }
         _ => return err(StatusCode::BAD_REQUEST, "unknown job kind"),
@@ -901,6 +944,48 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
         Ok(Some(j)) => (StatusCode::ACCEPTED, Json(j)).into_response(),
         Ok(None) => internal("job vanished"),
         Err(e) => internal(e),
+    }
+}
+
+// ---- tools ------------------------------------------------------------
+
+async fn list_tools(State(s): State<AppState>) -> Response {
+    Json(s.tools.status()).into_response()
+}
+
+#[derive(Deserialize)]
+struct InstallBody {
+    #[serde(default)]
+    confirm: String,
+}
+
+/// Starts a download of a pinned tool. Needs the exact confirmation phrase from `GET /v1/tools`.
+async fn install_tool(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    body: Option<Json<InstallBody>>,
+) -> Response {
+    let confirm = body.map(|b| b.0.confirm).unwrap_or_default();
+    match s.tools.install(&name, &confirm) {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(json!(s.tools.status().into_iter().find(|t| t.name == name))),
+        )
+            .into_response(),
+        Err((code, msg)) => err(
+            StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_REQUEST),
+            &msg,
+        ),
+    }
+}
+
+async fn remove_tool(State(s): State<AppState>, Path(name): Path<String>) -> Response {
+    match s.tools.uninstall(&name) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err((code, msg)) => err(
+            StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_REQUEST),
+            &msg,
+        ),
     }
 }
 

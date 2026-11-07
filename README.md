@@ -24,7 +24,7 @@ A self-hosted music server and player. One headless server (Docker or Podman) ho
 - Radio stations: a station list (a Greek list is included in `data/stations/`) with search and a liveness check, played in the browser
 - A control API, described in `docs/openapi.yaml`, so widgets and other apps can drive the player
 - Android app (early, in `android/`): search, playlists, library radios and stations, background playback with lock-screen controls, and offline pins that are checked against the server's size and SHA-256. See "Android app" below
-- A radio made from your own files, and transcoding to opus, mp3 or aac (needs ffmpeg on the server)
+- A radio made from your own files, and transcoding to opus, mp3 or aac (these need ffmpeg, which Mus-Eq downloads only after you confirm; see below)
 
 ## What is planned
 
@@ -73,12 +73,23 @@ The server can fetch one track at a time from a YouTube Music link or a Spotify 
 ```bash
 MUSEQ_FETCH=on
 MUSEQ_FETCH_ACK=i-have-read-the-terms-and-fetch-only-what-i-may-store
-MUSEQ_FETCH_YTDLP=/absolute/path/to/yt-dlp     # your own binary; the image does not include one
+MUSEQ_FETCH_YTDLP=/absolute/path/to/yt-dlp     # optional: your own binary. Without it, the copy installed from the Programs panel (below) is used
 ```
 
 Then `GET /v1/fetch/status` tells you whether it is on (and if not, why), and `POST /v1/jobs` with `{"kind":"fetch","input":{"url":"https://music.youtube.com/watch?v=..."}}` starts a job. Playlists and albums are refused. Optional: `MUSEQ_FETCH_INBOX` (default `<library>/_fetched`), `MUSEQ_FETCH_MAX_BYTES`, `MUSEQ_FETCH_TIMEOUT_S`, and `MUSEQ_FETCH_COOKIES` (a Netscape cookies file with permissions 600, used only when the service asks for a sign-in; the server works on a copy and never writes to your file).
 
 This has been tested only against a fake `yt-dlp` and a fake Spotify page. No real request to either service has been made from this code yet, so the first real run may find something the fakes did not.
+
+## Programs Mus-Eq downloads
+
+Mus-Eq does not include ffmpeg or yt-dlp, and the container image does not either. They are separate programs under their own licences, and the server fetches one only when you ask for it and confirm.
+
+- `GET /v1/tools` lists them. For each it says what it is for, the exact address and host, the size, the pinned SHA-256, its licence, whether the server already found one, and a ready-to-show message.
+- `POST /v1/tools/ffmpeg/install` with `{"confirm": "install ffmpeg n8.1.3"}` starts the download. Without that exact phrase nothing is downloaded and the answer is the same message. `GET /v1/tools` shows progress; `DELETE /v1/tools/ffmpeg` removes it. The server enforces the phrase; showing the message to a person is the client's job (the web client shows it before its confirm button).
+- The download must come from the pinned address over HTTPS (redirects may only go to GitHub's own download hosts), must match the SHA-256 pinned in this release, and must run and identify itself (for ffmpeg, also list the encoders Mus-Eq uses), or nothing is installed. An installed file that is later replaced no longer matches its install record and is not used. A download that takes too long is stopped. The files go in `MUSEQ_TOOLS_DIR` (default: a `tools` folder next to the database, `/data/tools` in the container). The folder must belong to the user the server runs as; if Mus-Eq creates it, it is made private (mode 700), and a folder you point to keeps its permissions.
+- A program you already have is used as before and needs no download: set `MUSEQ_FFMPEG` to its path, or have `ffmpeg` on `PATH`. `MUSEQ_TOOLS_DOWNLOADS=off` forbids downloads altogether.
+- This release pins ffmpeg n8.1.3 (a BtbN LGPL build, which has what Mus-Eq uses: libopus, libmp3lame and the native AAC encoder) and yt-dlp 2026.10.26, for Linux on x86_64 and aarch64. Other systems install the programs themselves. The builds need glibc, so Alpine and Termux are not covered. Pins are updated by new Mus-Eq releases, and the upstream project may remove an old build, in which case the install fails with a clear message.
+- Installing yt-dlp does not turn on the fetch feature, which stays off until you set it up (see above). Once fetch is on, it uses the installed yt-dlp unless `MUSEQ_FETCH_YTDLP` names another; it never looks for yt-dlp on `PATH`.
 
 ## Android app
 

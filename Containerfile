@@ -19,7 +19,9 @@ COPY crates ./crates
 RUN cargo build --release -p museq-server
 
 FROM debian:stable-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates && rm -rf /var/lib/apt/lists/*
+# No ffmpeg or yt-dlp in the image: the server downloads them on request, after a confirmation, into /data/tools
+# (see README, "Programs Mus-Eq downloads"). ca-certificates is needed for those HTTPS downloads.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/target/release/museq-server /usr/local/bin/museq-server
 COPY --from=web /web/dist /usr/share/museq/web
 COPY data/stations /usr/share/museq/stations

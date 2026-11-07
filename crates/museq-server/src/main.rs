@@ -38,6 +38,19 @@ async fn main() {
             Err(e) => eprintln!("museq-server: cannot read {}: {e}", seed.display()),
         }
     }
+    // Tools Mus-Eq downloads live next to the database unless MUSEQ_TOOLS_DIR says otherwise. Downloading can be
+    // switched off with MUSEQ_TOOLS_DOWNLOADS=off.
+    let tools_dir = std::env::var_os("MUSEQ_TOOLS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            cfg.db
+                .parent()
+                .map(|p| p.join("tools"))
+                .unwrap_or_else(|| "tools".into())
+        });
+    let tools = museq_server::tools::Tools::builtin(tools_dir).downloads_allowed(
+        !std::env::var("MUSEQ_TOOLS_DOWNLOADS").is_ok_and(|v| v.eq_ignore_ascii_case("off")),
+    );
     let state = api::AppState::new(
         conn,
         cfg.library.clone(),
@@ -48,7 +61,12 @@ async fn main() {
     .allow_private_stations(cfg.allow_private_stations)
     .services(cfg.services.clone())
     .fetch(cfg.fetch.clone())
-    .ffmpeg(std::env::var("MUSEQ_FFMPEG").unwrap_or_else(|_| "ffmpeg".into()));
+    .tools(tools);
+    // A program the owner points to is used as it is; otherwise one Mus-Eq installed, else the one on PATH.
+    let state = match std::env::var("MUSEQ_FFMPEG") {
+        Ok(p) if !p.trim().is_empty() => state.ffmpeg(p),
+        _ => state,
+    };
     let listener = tokio::net::TcpListener::bind(&cfg.bind)
         .await
         .unwrap_or_else(|e| panic!("cannot bind {}: {e}", cfg.bind));

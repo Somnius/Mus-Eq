@@ -74,17 +74,19 @@ impl FetchConfig {
             );
             return c;
         }
-        let Some(path) = std::env::var_os("MUSEQ_FETCH_YTDLP")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute() && p.is_file())
-        else {
-            off(
-                &mut c,
-                "MUSEQ_FETCH_YTDLP must be the absolute path of an existing yt-dlp",
-            );
-            return c;
-        };
-        c.ytdlp = path;
+        // An explicit path wins. Without one, the yt-dlp that Mus-Eq installed is used once it exists (it can be
+        // installed later, from the Programs panel), so a missing path is not an error here.
+        if let Some(raw) = std::env::var_os("MUSEQ_FETCH_YTDLP") {
+            let path = PathBuf::from(raw);
+            if !(path.is_absolute() && path.is_file()) {
+                off(
+                    &mut c,
+                    "MUSEQ_FETCH_YTDLP must be the absolute path of an existing yt-dlp",
+                );
+                return c;
+            }
+            c.ytdlp = path;
+        }
         if let Some(i) = std::env::var_os("MUSEQ_FETCH_INBOX") {
             c.inbox = PathBuf::from(i);
         }
@@ -396,7 +398,10 @@ struct Run {
 /// Run yt-dlp without a shell, in its own process group, with a deadline (the whole group is
 /// killed on timeout). Output is capped.
 async fn run_ytdlp(app: &AppState, args: &[String]) -> Result<Run, String> {
-    let mut cmd = tokio::process::Command::new(&app.fetch.ytdlp);
+    let Some(ytdlp) = app.ytdlp_path() else {
+        return Err("yt-dlp is not installed: install it from the Programs panel (GET /v1/tools), or set MUSEQ_FETCH_YTDLP".into());
+    };
+    let mut cmd = tokio::process::Command::new(ytdlp);
     cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

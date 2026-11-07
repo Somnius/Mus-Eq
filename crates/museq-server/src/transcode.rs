@@ -88,7 +88,7 @@ pub fn stream<G: Send + 'static>(
         Err(_) => {
             return (
                 StatusCode::NOT_IMPLEMENTED,
-                axum::Json(serde_json::json!({"error": "transcoding needs ffmpeg, which could not be started"})),
+                axum::Json(serde_json::json!({"error": "transcoding needs ffmpeg, which is not installed or could not be started; see GET /v1/tools for how to install it (it is downloaded only after you confirm)"})),
             )
                 .into_response();
         }

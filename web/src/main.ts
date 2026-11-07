@@ -1,6 +1,6 @@
 import Webamp from "webamp";
 import type { Track as WebampTrack } from "webamp";
-import { Unauthorized, api, audioUrl, type Playlist, type SessionSnapshot, type Station, type Track } from "./api";
+import { Unauthorized, api, audioUrl, type Playlist, type SessionSnapshot, type Station, type Tool, type Track } from "./api";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const clientId = crypto.randomUUID();
@@ -39,6 +39,7 @@ async function boot() {
   await refreshSkins();
   await refreshStations();
   await refreshPlaylists();
+  await refreshTools();
 }
 
 async function refreshTracks(q: string) {
@@ -85,6 +86,86 @@ async function refreshSkins() {
       return li;
     }),
   );
+}
+
+// ---- programs Mus-Eq can download (ffmpeg, yt-dlp) --------------------------------------
+
+let toolsTimer: number | undefined;
+const busy = (t: Tool) => ["downloading", "verifying", "unpacking", "checking"].includes(t.progress.phase);
+const foundText: Record<Tool["found"], string> = {
+  installed: "installed by Mus-Eq",
+  modified: "installed copy was changed, so it is not used (remove it and install again)",
+  configured: "using the program you configured",
+  system: "found on this server",
+  missing: "not installed",
+};
+
+async function refreshTools() {
+  let tools: Tool[];
+  try { tools = await api.tools(); } catch (e) { $("tools-status").textContent = `Cannot read the programs list: ${(e as Error).message}`; return; }
+  $("tools-list").replaceChildren(...tools.map(toolRow));
+  window.clearTimeout(toolsTimer);
+  // keep the progress current while something downloads
+  if (tools.some(busy)) toolsTimer = window.setTimeout(() => void refreshTools(), 1500);
+}
+
+function toolRow(t: Tool): HTMLElement {
+  const li = document.createElement("li");
+  li.className = "tool";
+  li.dataset.tool = t.name;
+  const head = document.createElement("div");
+  head.className = "tool-head";
+  const name = document.createElement("strong");
+  name.textContent = `${t.name} ${t.version}`;
+  const state = document.createElement("span");
+  state.className = "sub";
+  const pct = t.progress.total > 0 ? Math.floor((100 * t.progress.downloaded) / t.progress.total) : 0;
+  state.textContent = busy(t)
+    ? `${t.progress.phase}${t.progress.phase === "downloading" ? ` ${pct}%` : "…"}`
+    : t.progress.phase === "failed" && t.found === "missing" ? `not installed (last try failed)` : (foundText[t.found] ?? t.found);
+  head.append(name, state);
+  const why = document.createElement("div");
+  why.className = "sub";
+  why.textContent = `Used ${t.purpose}.`;
+  li.append(head, why);
+  if (t.progress.phase === "failed" && t.progress.error) {
+    const err = document.createElement("p");
+    err.className = "error";
+    err.setAttribute("role", "alert");
+    err.textContent = t.progress.error;
+    li.append(err);
+  }
+  if (t.found === "installed" && !busy(t)) {
+    const rm = document.createElement("button");
+    rm.textContent = "Remove";
+    rm.onclick = async () => { try { await api.removeTool(t.name); } catch (e) { $("tools-status").textContent = (e as Error).message; } await refreshTools(); };
+    li.append(rm);
+  } else if (t.found === "missing" && !busy(t)) {
+    if (!t.platform_supported || !t.message) {
+      const no = document.createElement("p");
+      no.className = "sub";
+      no.textContent = "This release has no download for this server's system. Install it yourself and set its environment variable (for example MUSEQ_FFMPEG).";
+      li.append(no);
+    } else {
+      // the full message is shown first; the confirmation is sent only by the second button
+      const details = document.createElement("details");
+      const sum = document.createElement("summary");
+      sum.textContent = "What would be downloaded?";
+      const msg = document.createElement("p");
+      msg.className = "tool-msg";
+      msg.textContent = t.message;
+      const go = document.createElement("button");
+      go.textContent = "I understand, download and install";
+      go.onclick = async () => {
+        go.disabled = true;
+        try { await api.installTool(t.name, t.confirm_phrase); } catch (e) { $("tools-status").textContent = (e as Error).message; }
+        await refreshTools();
+      };
+      details.append(sum, msg, go);
+      li.append(details);
+    }
+  }
+  return li;
 }
 
 // ---- player + session reporting -------------------------------------------------------

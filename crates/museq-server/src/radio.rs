@@ -328,11 +328,18 @@ async fn run_station(s: AppState, id: i64, hub: Arc<Hub>) {
         while recent.len() > 300 {
             recent.pop_front();
         }
-        let mut child =
-            match transcode::command(&s.ffmpeg, &s.root.join(rel), codec, kbps, true).spawn() {
-                Ok(c) => c,
-                Err(_) => break,
-            };
+        let mut child = match transcode::command(
+            &s.ffmpeg_path(),
+            &s.root.join(rel),
+            codec,
+            kbps,
+            true,
+        )
+        .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => break,
+        };
         let mut out = child.stdout.take().expect("piped");
         let mut buf = vec![0u8; 8 * 1024];
         let mut sent = 0usize;
