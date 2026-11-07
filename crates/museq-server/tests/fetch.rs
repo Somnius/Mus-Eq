@@ -234,7 +234,7 @@ if [ -n "$search" ]; then
 fi
 [ "$MODE" = ratelimit ] && {{ echo "ERROR: HTTP Error 429: Too Many Requests" >&2; exit 1; }}
 [ "$MODE" = live ] && {{ exit 101; }}
-[ "$MODE" = slow ] && {{ sleep 30; }}
+[ "$MODE" = slow ] && {{ d=$(dirname "$0"); echo $$ > "$d/slow.pid"; sleep 30 & echo $! > "$d/slow-child.pid"; wait; }}
 # find the -o template
 while [ $# -gt 0 ]; do [ "$1" = "-o" ] && tmpl="$2"; [ "$1" = "--cookies" ] && cookies="$2"; shift; done
 if [ "$MODE" = login ] && [ -z "$cookies" ]; then echo "ERROR: Sign in to confirm you're not a bot" >&2; exit 1; fi
@@ -627,6 +627,21 @@ async fn a_download_that_takes_too_long_is_stopped() {
         started.elapsed() < Duration::from_secs(10),
         "stopped by the timeout, not by the 30 s sleep"
     );
+    // both the script and its child are really gone (the whole process group was killed)
+    let tools = env.state.fetch.ytdlp.parent().unwrap().to_path_buf();
+    for name in ["slow.pid", "slow-child.pid"] {
+        let pid = std::fs::read_to_string(tools.join(name)).unwrap();
+        let proc = format!("/proc/{}", pid.trim());
+        let mut gone = false;
+        for _ in 0..50 {
+            gone = !std::path::Path::new(&proc).exists();
+            if gone {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(gone, "{name} ({proc}) is still alive");
+    }
 }
 
 #[tokio::test]

@@ -427,6 +427,7 @@ async fn run_ytdlp(app: &AppState, args: &[String]) -> Result<Run, String> {
                 // SAFETY: killpg on the group we created for this child
                 unsafe { libc::killpg(pid as i32, libc::SIGKILL) };
             }
+            let _ = child.wait().await; // reap it, no zombie
             Err("yt-dlp took too long and was stopped".into())
         }
     }
