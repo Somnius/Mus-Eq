@@ -35,6 +35,8 @@ pub struct AppState {
     pub players: Arc<Mutex<HashMap<String, usize>>>,
     /// Allow station URLs on loopback/private addresses (`MUSEQ_ALLOW_PRIVATE_STATIONS`).
     pub allow_private_stations: bool,
+    pub services: Arc<crate::metadata::Services>,
+    pub limiters: Arc<crate::metadata::Limiters>,
 }
 
 const COOKIE_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
@@ -62,7 +64,14 @@ impl AppState {
             login_fails: Arc::new(Mutex::new((Instant::now(), 0))),
             players: Arc::new(Mutex::new(HashMap::new())),
             allow_private_stations: false,
+            services: Arc::new(crate::metadata::Services::default()),
+            limiters: Arc::new(crate::metadata::Limiters::default()),
         }
+    }
+
+    pub fn services(mut self, services: crate::metadata::Services) -> Self {
+        self.services = Arc::new(services);
+        self
     }
 
     pub fn allow_private_stations(mut self, allow: bool) -> Self {
@@ -104,6 +113,13 @@ pub fn router(state: AppState) -> Router {
             get(crate::skins::list_skins).post(crate::skins::upload_skin),
         )
         .route("/v1/skins/{id}", get(crate::skins::get_skin))
+        .route(
+            "/v1/tracks/{id}/candidates",
+            get(crate::metadata::list_candidates),
+        )
+        .route("/v1/tracks/{id}/identify", post(crate::metadata::identify))
+        .route("/v1/candidates/{id}/accept", post(crate::metadata::accept))
+        .route("/v1/candidates/{id}/reject", post(crate::metadata::reject))
         .route("/v1/duplicates", get(crate::duplicates::list_duplicates))
         .route("/v1/duplicates/merge", post(crate::duplicates::merge))
         .route(
@@ -613,21 +629,18 @@ fn load_job(conn: &Connection, id: i64) -> rusqlite::Result<Option<Job>> {
 #[derive(Deserialize)]
 struct NewJob {
     kind: String,
+    /// For `tag`: only these tracks (default: every track with a missing artist or album)
+    #[serde(default)]
+    track_ids: Option<Vec<String>>,
 }
 
 async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Response {
     let kind = match body.kind.as_str() {
-        k @ ("scan" | "check_stations" | "fingerprint") => k.to_string(),
+        k @ ("scan" | "check_stations" | "fingerprint" | "tag") => k.to_string(),
         "fetch" => {
             return err(
                 StatusCode::FORBIDDEN,
                 "fetch is disabled in the configuration",
-            );
-        }
-        "tag" => {
-            return err(
-                StatusCode::NOT_IMPLEMENTED,
-                "this job kind is not implemented yet",
             );
         }
         _ => return err(StatusCode::BAD_REQUEST, "unknown job kind"),
@@ -659,6 +672,11 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
     let task_db = db.clone();
     let root = s.root.clone();
     let allow_private = s.allow_private_stations;
+    let app = s.clone();
+    let only: Option<Vec<i64>> = body
+        .track_ids
+        .as_ref()
+        .map(|v| v.iter().filter_map(|x| x.parse().ok()).collect());
     let work = tokio::spawn(async move {
         let _ = crate::db::lock(&task_db).execute(
             "UPDATE job SET state='running', attempts=attempts+1 WHERE id=?1",
@@ -672,6 +690,10 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
             serde_json::to_string(&stats).map_err(|_| "cannot encode result")?
         } else if kind == "fingerprint" {
             crate::fingerprint::run_job(task_db.clone(), root.clone())
+                .await
+                .to_string()
+        } else if kind == "tag" {
+            crate::metadata::run_tag_job(app.clone(), only.clone())
                 .await
                 .to_string()
         } else {

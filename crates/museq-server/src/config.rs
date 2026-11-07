@@ -7,6 +7,9 @@ use std::path::PathBuf;
 /// - `MUSEQ_DB`       SQLite file (default `./museq.db`)
 /// - `MUSEQ_SKINS_DIR` where uploaded `.wsz` skins are stored (default `./skins`)
 /// - `MUSEQ_STATIONS_SEED` comma-separated paths of `Name|Category|URL` list files imported at startup (new stations only)
+/// - `MUSEQ_ACOUSTID_KEY` your AcoustID application key (identify tracks by audio; without it that stays off)
+/// - `MUSEQ_CONTACT` contact for the User-Agent sent to MusicBrainz (default: the project page)
+/// - `MUSEQ_MUSICBRAINZ_URL`, `MUSEQ_ACOUSTID_URL` override the service addresses (for testing)
 /// - `MUSEQ_ALLOW_PRIVATE_STATIONS` set to `1` to allow stations on loopback/private addresses (for radio on your own network)
 /// - `MUSEQ_WEB_DIR`  built web client to serve at `/` (optional)
 /// - `MUSEQ_TOKEN` or `MUSEQ_TOKEN_FILE`  the owner bearer token (required, at least 16 characters)
@@ -20,6 +23,7 @@ pub struct Config {
     pub web_dir: Option<PathBuf>,
     pub stations_seeds: Vec<PathBuf>,
     pub allow_private_stations: bool,
+    pub services: crate::metadata::Services,
 }
 
 pub const MIN_TOKEN_LEN: usize = 16;
@@ -41,7 +45,21 @@ impl Config {
                 "the token must be at least {MIN_TOKEN_LEN} characters"
             ));
         }
+        let mut services = crate::metadata::Services::default();
+        if let Ok(u) = std::env::var("MUSEQ_MUSICBRAINZ_URL") {
+            services.musicbrainz_url = u;
+        }
+        if let Ok(u) = std::env::var("MUSEQ_ACOUSTID_URL") {
+            services.acoustid_url = u;
+        }
+        services.acoustid_key = std::env::var("MUSEQ_ACOUSTID_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty());
+        if let Ok(contact) = std::env::var("MUSEQ_CONTACT") {
+            services.user_agent = format!("Mus-Eq/{} ({})", env!("CARGO_PKG_VERSION"), contact);
+        }
         Ok(Self {
+            services,
             bind: std::env::var("MUSEQ_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into()),
             library: std::env::var("MUSEQ_LIBRARY")
                 .unwrap_or_else(|_| "./library".into())

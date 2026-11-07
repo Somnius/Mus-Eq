@@ -81,11 +81,13 @@ Checked before starting (2026-11-07): the pure-Rust fingerprint crate `rusty-chr
 - [ ] Not verified: score thresholds on real music (only synthetic noise so far), AcoustID compatibility of the output, Opus fingerprinting, speed on a large library, a web UI for duplicates (API only for now)
 Exit met on fixtures: the same source as FLAC, MP3 and OGG becomes one track with the FLAC preferred, playlists keep working, the other source stays apart.
 
-### 3b: metadata candidates
-- [ ] MusicBrainz text search for weak or missing tags (1 request per second, descriptive User-Agent, configurable base URL, only fake servers in tests); candidates stored, applied to the database only on accept (Q12 default; files are not rewritten)
-- [ ] Identify by audio through AcoustID: needs the owner's own app key (`MUSEQ_ACOUSTID_KEY`), answers 501 without one; compatibility with our fingerprints to be proven with a real lookup
-- [ ] Discogs: later, needs the owner's token
-Exit: a mistagged file shows a candidate and changes only on accept.
+### 3b: metadata candidates (built 2026-11-07)
+- [x] MusicBrainz text search for tracks with a missing artist or album (job `tag`, optional `track_ids`), 1 request per second behind one shared limiter, descriptive User-Agent (`MUSEQ_CONTACT`), configurable base URLs, candidates below a score of 70 dropped
+- [x] Candidates stored; `accept` applies title, artist and album to the track in the database only (the audio file is never rewritten, checked byte for byte), marks the track corrected so rescans keep it, and supersedes the other pending candidates; `reject` dismisses one
+- [x] `POST /v1/tracks/{id}/identify` through AcoustID: 501 without the owner's key (`MUSEQ_ACOUSTID_KEY`), 409 without a fingerprint
+- [x] Tests against fake MusicBrainz and AcoustID servers only (request shape, User-Agent, 503 handling, no duplicate candidates on a second run, rescan keeps a correction, parsing); the rate limiter spacing is tested
+- [ ] Not verified: that an AcoustID lookup with a **real key** accepts our fingerprints (no key, no `fpcalc` to compare); real MusicBrainz replies (only fakes); Discogs (needs the owner's token; later); a web UI for suggestions (API only for now)
+Exit met on fakes: a mistagged file shows a candidate and changes only on accept.
 
 ### 3c: playlist extension (local pool) and a minimal playlist UI
 - [ ] `POST /v1/playlists/{id}/extend`: same genre, artists not already in the playlist, local library only; says so when the pool is empty

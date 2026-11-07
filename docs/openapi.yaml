@@ -109,6 +109,58 @@ paths:
                   merged_files: { type: integer }
         "400": { description: "Fewer than two files, keep not in the list, or an invalid id", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/tracks/{id}/candidates:
+    get:
+      tags: [library]
+      operationId: listCandidates
+      summary: Suggested metadata for a track (from MusicBrainz or AcoustID), newest decisions last. Nothing is applied until a candidate is accepted.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Candidates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Candidate" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/tracks/{id}/identify:
+    post:
+      tags: [library]
+      operationId: identifyTrack
+      summary: Identify a track by its audio through AcoustID and store the answers as candidates. Needs MUSEQ_ACOUSTID_KEY and a fingerprint.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: "How many candidates were found and stored" }
+        "409": { description: "No fingerprint yet: run the fingerprint job", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "501": { description: "No AcoustID key configured", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "502": { description: "AcoustID did not answer properly", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/candidates/{id}/accept:
+    post:
+      tags: [library]
+      operationId: acceptCandidate
+      summary: Apply a candidate to its track in the database (title, artist, album). Audio files are never rewritten, and a rescan keeps the correction.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200": { description: Applied }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "Already accepted, rejected or superseded", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /v1/candidates/{id}/reject:
+    post:
+      tags: [library]
+      operationId: rejectCandidate
+      summary: Dismiss a pending candidate
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204": { description: Rejected }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/tracks:
     get:
       tags: [library]
@@ -442,6 +494,7 @@ paths:
               properties:
                 kind: { type: string, enum: [scan, check_stations, fetch, tag, fingerprint] }
                 input: { type: object, additionalProperties: true }
+                track_ids: { type: array, items: { type: string }, description: "For tag: only these tracks (default: tracks with a missing artist or album)" }
       responses:
         "202":
           description: Accepted
@@ -454,7 +507,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "400": { description: "Unknown job kind", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "501": { description: "Job kind not implemented yet (tag, fingerprint)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "501": { description: "Job kind not implemented", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "403":
           description: Job kind disabled by configuration
           content:
@@ -612,6 +665,19 @@ components:
         result: { type: [object, "null"], additionalProperties: true }
         error: { type: [string, "null"] }
         result_track_id: { type: string }
+    Candidate:
+      type: object
+      properties:
+        id: { type: string }
+        track_id: { type: string }
+        source: { type: string, enum: [musicbrainz, acoustid] }
+        score: { type: [number, "null"], description: "0-100" }
+        title: { type: [string, "null"] }
+        artist: { type: [string, "null"] }
+        album: { type: [string, "null"] }
+        year: { type: [string, "null"] }
+        mbid: { type: [string, "null"] }
+        status: { type: string, enum: [pending, accepted, rejected, superseded] }
     DuplicateGroup:
       type: object
       required: [id, keep_file_id, files, proof]

@@ -232,8 +232,13 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
                         params![sha, bytes, mtime, codec, p.duration_ms, id, rel, p.sample_rate, p.channels, bitrate_kbps, lossless],
                     )?;
                     // the track follows its preferred file's tags
+                    // a track the owner corrected keeps its corrected title, artist and album
                     tx.execute(
-                        "UPDATE track SET title=?1, artist=?2, album=?3, duration_ms=?4, search_text=?6, genre=?7 WHERE preferred_file_id=?5",
+                        "UPDATE track SET title=CASE WHEN corrected=1 THEN title ELSE ?1 END,
+                           artist=CASE WHEN corrected=1 THEN artist ELSE ?2 END,
+                           album=CASE WHEN corrected=1 THEN album ELSE ?3 END,
+                           search_text=CASE WHEN corrected=1 THEN search_text ELSE ?6 END,
+                           duration_ms=?4, genre=?7 WHERE preferred_file_id=?5",
                         params![title, p.artist, p.album, p.duration_ms, id, search, p.genre],
                     )?;
                     tx.execute("UPDATE file SET track_id = (SELECT id FROM track WHERE preferred_file_id = ?1) WHERE id = ?1 AND track_id IS NULL", [id])?;

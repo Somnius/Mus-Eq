@@ -310,8 +310,6 @@ async fn job_kinds_are_gated() {
     )
     .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
-    let (s, _) = json_call(&app, Method::POST, "/v1/jobs", Some(json!({"kind": "tag"}))).await;
-    assert_eq!(s, StatusCode::NOT_IMPLEMENTED);
     let (s, _) = json_call(
         &app,
         Method::POST,

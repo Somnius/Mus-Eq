@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod duplicates;
 pub mod fingerprint;
+pub mod metadata;
 pub mod scan;
 pub mod session;
 pub mod skins;

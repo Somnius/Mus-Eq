@@ -134,6 +134,24 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
         )?;
         conn.pragma_update(None, "user_version", 5)?;
     }
+    if version < 6 {
+        // Suggested metadata. A track the owner corrected keeps its corrected tags on rescans.
+        conn.execute_batch(
+            "ALTER TABLE track ADD COLUMN corrected INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE track ADD COLUMN mbid TEXT;
+             CREATE TABLE candidate(
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               track_id INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
+               source TEXT NOT NULL,          -- musicbrainz | acoustid
+               score REAL,
+               title TEXT, artist TEXT, album TEXT, year TEXT, mbid TEXT,
+               status TEXT NOT NULL DEFAULT 'pending',   -- pending | accepted | rejected | superseded
+               created_at INTEGER NOT NULL,
+               UNIQUE(track_id, source, mbid)
+             );",
+        )?;
+        conn.pragma_update(None, "user_version", 6)?;
+    }
     // A job left "running" by a crash will never finish.
     conn.execute("UPDATE job SET state='failed', error='interrupted by restart' WHERE state IN ('queued','running')", [])?;
     Ok(conn)
@@ -168,7 +186,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         // data carried across, the new columns filled in, the new tables there
         let (track_id, mtime): (Option<i64>, i64) = conn
             .query_row("SELECT track_id, mtime FROM file WHERE id=7", [], |r| {
@@ -192,7 +210,7 @@ mod tests {
             search.contains("song"),
             "search text is backfilled: {search}"
         );
-        for table in ["skin", "station", "fingerprint"] {
+        for table in ["skin", "station", "fingerprint", "candidate"] {
             conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| {
                 r.get::<_, i64>(0)
             })
