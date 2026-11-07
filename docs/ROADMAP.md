@@ -78,7 +78,8 @@ Checked before starting (2026-11-07): the pure-Rust fingerprint crate `rusty-chr
 - [x] `GET /v1/duplicates`: exact (same hash) and audio (fingerprint) groups, each with a proposed keeper and the proof; nothing is ever deleted
 - [x] `POST /v1/duplicates/merge`: merge in SQLite only (files stay on disk and stream; playlist entries re-pointed; a merged track survives the loss of its preferred file)
 - [x] Tests: seeded-noise fixtures (FLAC, MP3, OGG of one source, a different source), an Opus file, exact copies, merge validation, quality columns, scan/fingerprint exclusion
-- [ ] Not verified: score thresholds on real music (only synthetic noise so far), AcoustID compatibility of the output, Opus fingerprinting, speed on a large library, a web UI for duplicates (API only for now)
+- [x] Verified later the same day (see `VERIFICATION.md`): thresholds on real music (492 true pairs 0.00-1.27, no false merge among 17,086 others), Opus decoding identical to ffmpeg within one bit and fingerprinted at about 470 times real time, stored comparisons (20,000 files: duplicate list in 0.03 s instead of 449 s)
+- [ ] Still not verified: AcoustID acceptance of our fingerprints (needs the owner's key), live and remix versions of one song, a web page for duplicates (API only)
 Exit met on fixtures: the same source as FLAC, MP3 and OGG becomes one track with the FLAC preferred, playlists keep working, the other source stays apart.
 
 ### 3b: metadata candidates (built 2026-11-07)
@@ -86,7 +87,7 @@ Exit met on fixtures: the same source as FLAC, MP3 and OGG becomes one track wit
 - [x] Candidates stored; `accept` applies title, artist and album to the track in the database only (the audio file is never rewritten, checked byte for byte), marks the track corrected so rescans keep it, and supersedes the other pending candidates; `reject` dismisses one
 - [x] `POST /v1/tracks/{id}/identify` through AcoustID: 501 without the owner's key (`MUSEQ_ACOUSTID_KEY`), 409 without a fingerprint
 - [x] Tests against fake MusicBrainz and AcoustID servers only (request shape, User-Agent, 503 handling, no duplicate candidates on a second run, rescan keeps a correction, parsing); the rate limiter spacing is tested
-- [ ] Not verified: that an AcoustID lookup with a **real key** accepts our fingerprints (no key, no `fpcalc` to compare); real MusicBrainz replies (only fakes); Discogs (needs the owner's token; later); a web UI for suggestions (API only for now)
+- [x] Real MusicBrainz replies checked (ten queries): the parser matches; fixed 503 retries and release choice (official studio albums first). Still open: AcoustID with a real key; Discogs (needs the owner's token); a web page for suggestions (API only)
 Exit met on fakes: a mistagged file shows a candidate and changes only on accept.
 
 ### 3c: playlist extension (local pool) and a minimal playlist UI (built 2026-11-07)

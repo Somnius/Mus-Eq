@@ -223,8 +223,11 @@ fn group_files(files: Vec<FileInfo>, edges: Vec<(i64, i64, f64)>) -> Vec<Group> 
     groups
 }
 
+/// Files, stored audio matches (a, b, score) and the number of fingerprints not compared yet.
+type Listing = (Vec<FileInfo>, Vec<(i64, i64, f64)>, i64);
+
 pub async fn list_duplicates(State(s): State<AppState>) -> Response {
-    let loaded: rusqlite::Result<(Vec<FileInfo>, Vec<(i64, i64, f64)>, i64)> = (|| {
+    let loaded: rusqlite::Result<Listing> = (|| {
         let conn = db::lock(&s.db);
         let files = load(&conn)?;
         let edges = conn

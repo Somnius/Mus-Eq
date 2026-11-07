@@ -76,6 +76,7 @@ paths:
                 required: [groups]
                 properties:
                   note: { type: string }
+                  pending_comparisons: { type: integer, description: "Fingerprinted files not compared yet (run the fingerprint job)" }
                   groups:
                     type: array
                     items: { $ref: "#/components/schemas/DuplicateGroup" }

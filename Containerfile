@@ -9,6 +9,8 @@ ENV UV_THREADPOOL_SIZE=4
 RUN npm run build
 
 FROM rust:1 AS build
+# the opus crate builds libopus from source
+RUN apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
 # Keep the build under the CPU cap (cargo config on the host does not apply here).
 ENV CARGO_BUILD_JOBS=20
 WORKDIR /src

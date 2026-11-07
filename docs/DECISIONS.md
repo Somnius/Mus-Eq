@@ -35,3 +35,6 @@
 - 2026-11-07 **Accepted metadata corrections live in SQLite only** (Q12 default): the audio files are never rewritten, and a corrected track keeps its tags across rescans. Candidates from MusicBrainz and AcoustID are stored and never applied automatically.
 - 2026-11-07 **One shared rate limiter per outside service** (MusicBrainz about 1 request per second, AcoustID about 3 per second) so two jobs can't double the rate; only fake servers are used in tests and CI.
 - 2026-11-07 **Playlist extension uses the local library and the genre tag only** (no network, no downloads): same genre, a new artist each time. Style similarity beyond the genre tag is a later idea.
+- 2026-11-07 **Duplicate comparisons are stored, not recomputed.** The scale test showed the duplicate list was quadratic (449 s at 20,000 files). The fingerprint job now compares new files against the library and stores the pairs; the list reads them.
+- 2026-11-07 **Opus is decoded with libopus** (the `opus` crate, built from source, cmake needed); Symphonia stays for every other format. Checked against ffmpeg sample for sample.
+- 2026-11-07 **Thresholds kept: MAX_SCORE 2.0, MIN_COVERAGE 0.8, 4 s length window**, after real-music tuning (a six-point gap between true and false matches). A partial copy is not offered as a duplicate (window), by default.
