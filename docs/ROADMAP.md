@@ -69,15 +69,33 @@ Exit: the browser plays a station from the list through the plain audio element;
 ## Side track: Omarchy plugin (after phase 2)
 First-party bar widget in its own repository, built from the findings in `docs/PLUGINS.md`: service + bar-widget, session polling, token file, station picker. Needs the station command above, cover art and position in the session.
 
-## Phase 3: metadata, duplicates, fetch, extension (~4-6 weeks)
-Jobs retry with backoff and keep partial results (`attempts`).
-- [ ] Tag candidates from MusicBrainz/Discogs, stored and applied only on accept
-- [ ] `fpcalc` duplicate groups with a keep-best proposal, never auto-delete
-- [ ] AcoustID identify-by-audio (check the free-API reality first)
-- [ ] Fetch jobs for singles and playlists behind the flag (owner has read the terms)
-- [ ] Playlist extension: same genre, new artists only, local pool first
-Image adds: `fpcalc`, pinned `yt-dlp`.
-Exit: a mistagged file shows a candidate and changes only on accept; a known duplicate pair collapses to one preferred file; a short playlist grows by N tracks with no repeated artist; fetch fails cleanly with the flag off.
+## Phase 3: metadata, duplicates, extension, fetch (split into four steps; plan 2026-11-07)
+Checked before starting (2026-11-07): the pure-Rust fingerprint crate `rusty-chromaprint` (MIT, one `rubato`, no second Symphonia) fingerprints FLAC, MP3 and OGG through Symphonia and matches re-encodes (same noise source: score 0.33 as MP3, 1.07 as OGG; a different source scored 7.05; lower is better). **Symphonia 0.6.1 cannot decode Opus** ("unsupported audio codec"), so Opus files are marked "unsupported for fingerprinting" until ffmpeg joins the image (phase 5). Compatibility of its compressed fingerprint with AcoustID lookups is **unverified** (no `fpcalc` here to compare; it needs a real lookup with a registered key). The score thresholds come from synthetic noise only and must be checked on real music.
+
+### 3a: fingerprints and duplicates (no network)
+- [ ] Migration v5: one track can own several files (`file.track_id`), plus sample rate, channels, average bitrate, lossless flag and genre; all files re-probed on the next scan
+- [ ] `fingerprint` job: decode with Symphonia, fingerprint in Rust, 2 at a time, tolerant of files that vanish; Opus and unreadable files get a status, never fail the job
+- [ ] `GET /v1/duplicates`: exact (same hash) and audio (fingerprint) groups, each with a proposed keeper (lossless, then bitrate, then sample rate, then size) and the proof; nothing is ever deleted
+- [ ] `POST /v1/duplicates/merge`: merge in SQLite only (files stay on disk, playlist entries are re-pointed)
+- [ ] Tests with seeded noise fixtures re-encoded as FLAC, MP3 and OGG; Opus and merge/playlist cases
+Exit: a known duplicate pair (same source as FLAC and MP3) collapses to one track with the FLAC preferred, playlists keep working, different sources stay apart.
+
+### 3b: metadata candidates
+- [ ] MusicBrainz text search for weak or missing tags (1 request per second, descriptive User-Agent, configurable base URL, only fake servers in tests); candidates stored, applied to the database only on accept (Q12 default; files are not rewritten)
+- [ ] Identify by audio through AcoustID: needs the owner's own app key (`MUSEQ_ACOUSTID_KEY`), answers 501 without one; compatibility with our fingerprints to be proven with a real lookup
+- [ ] Discogs: later, needs the owner's token
+Exit: a mistagged file shows a candidate and changes only on accept.
+
+### 3c: playlist extension (local pool) and a minimal playlist UI
+- [ ] `POST /v1/playlists/{id}/extend`: same genre, artists not already in the playlist, local library only; says so when the pool is empty
+- [ ] Web client: playlist list, play a playlist in Webamp, and when it ends call the extension for playlists that have it switched on
+Exit: a short playlist grows by N tracks with no repeated artist.
+
+### 3d: fetch (blocked on Q2)
+- [ ] Not started and no download code until Q2 is answered. Stays behind the config flag, off by default; the terms of YouTube, Spotify and Deezer are read by the owner first.
+
+Image adds: nothing for 3a to 3c (fingerprinting is in-process Rust); `yt-dlp` pinned for 3d.
+Exit (whole phase): a known duplicate pair collapses to one preferred file; a mistagged file changes only on accept; a short playlist grows with no repeated artist; fetch fails cleanly with the flag off. Gate before 3d: independent check, both reviews, docs, green light.
 
 ## Phase 4: native clients + offline (~4-6 weeks)
 - [ ] Android: Media3, foreground service, offline pins, lock-screen controls
