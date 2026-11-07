@@ -46,7 +46,7 @@ page.on("console", (m) => { if (m.type() === "error") errors.push(`console: ${m.
 
 await page.goto(base);
 await page.waitForSelector("#login-form", { state: "visible" });
-check(await page.isHidden("#app"), "login form shown, app hidden before signing in");
+check(await page.isHidden("#app") && (await page.isVisible("#login-form")), "login form shown, app hidden before signing in");
 
 await page.fill("#token", "definitely-not-the-token");
 await page.click("#login-form button");
@@ -56,6 +56,8 @@ check(true, "wrong token shows an error");
 await page.fill("#token", token);
 await page.click("#login-form button");
 await page.waitForSelector("#app", { state: "visible" });
+// visibility, not just the attribute: the form's own CSS once kept it on screen behind the app
+check(await page.isHidden("#login"), "the login form is really gone after signing in");
 await page.waitForFunction(() => document.querySelectorAll("#tracks li").length > 0);
 const n = await page.locator("#tracks li").count();
 check(n >= 1, `library lists ${n} tracks`);
