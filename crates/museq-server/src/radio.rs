@@ -12,6 +12,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::sync::broadcast;
 
@@ -22,7 +23,8 @@ use crate::transcode::{self, Codec};
 /// What one running station shares between its encoder task and its listeners.
 pub struct Hub {
     tx: broadcast::Sender<Bytes>,
-    now: Mutex<Option<i64>>, // track id on air
+    now: Mutex<Option<i64>>,             // track id on air
+    stop: std::sync::atomic::AtomicBool, // set when the station is deleted
 }
 
 /// At most this many stations encode at the same time (each is one ffmpeg process).
@@ -195,7 +197,11 @@ pub async fn delete_radio(State(s): State<AppState>, Path(id): Path<i64>) -> Res
     if n == 0 {
         return err(StatusCode::NOT_FOUND, "no such radio");
     }
-    // the encoder notices the missing station on its next track and stops
+    // stop the encoder right now, mid-track
+    let hubs = s.radios.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(h) = hubs.get(&id) {
+        h.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -279,7 +285,11 @@ async fn run_station(s: AppState, id: i64, hub: Arc<Hub>) {
         let mut out = child.stdout.take().expect("piped");
         let mut buf = vec![0u8; 8 * 1024];
         let mut sent = 0usize;
+        let started = std::time::Instant::now();
         loop {
+            if hub.stop.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
             match out.read(&mut buf).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
@@ -293,9 +303,18 @@ async fn run_station(s: AppState, id: i64, hub: Arc<Hub>) {
         }
         let _ = child.kill().await;
         // a file that produced nothing (corrupt, vanished) is skipped; many in a row end the station
-        failures = if sent == 0 { failures + 1 } else { 0 };
+        if hub.stop.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+        // a track that gave nothing, or ended within a second, counts as a failure: back off, and
+        // give up after ten in a row (a broken ffmpeg must not spin)
+        let quick = sent == 0 || started.elapsed() < Duration::from_secs(1);
+        failures = if quick { failures + 1 } else { 0 };
         if failures >= 10 {
             break;
+        }
+        if quick {
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
     *hub.now.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -334,6 +353,7 @@ pub async fn stream(State(s): State<AppState>, Path(id): Path<i64>) -> Response 
                 let hub = Arc::new(Hub {
                     tx,
                     now: Mutex::new(None),
+                    stop: Default::default(),
                 });
                 hubs.insert(id, hub.clone());
                 (rx, Some(hub))

@@ -251,3 +251,48 @@ async fn listeners_share_one_encoder_that_stops_when_they_leave() {
         "the encoder did not stop after the last listener left"
     );
 }
+
+#[tokio::test]
+async fn deleting_a_station_ends_its_stream_at_once() {
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_err()
+    {
+        assert!(std::env::var_os("CI").is_none(), "ffmpeg is required in CI");
+        return;
+    }
+    let app = app_with_library().await;
+    let (_, r) = call(
+        &app,
+        Method::POST,
+        "/v1/radios",
+        Some(json!({"name": "Gone FM", "kbps": 64})),
+    )
+    .await;
+    let id = r["id"].as_str().unwrap().to_string();
+    let req = Request::builder()
+        .uri(format!("/v1/radios/{id}/stream"))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    let mut body = app.clone().oneshot(req).await.unwrap().into_body();
+    tokio::time::timeout(Duration::from_secs(10), body.frame())
+        .await
+        .expect("audio arrives");
+    assert_eq!(
+        call(&app, Method::DELETE, &format!("/v1/radios/{id}"), None)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    // the stream ends (None) well before the track would have
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        while body.frame().await.is_some() {}
+    })
+    .await;
+    assert!(
+        ended.is_ok(),
+        "the stream kept going after the station was deleted"
+    );
+}
