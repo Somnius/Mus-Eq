@@ -1,6 +1,6 @@
 import Webamp from "webamp";
 import type { Track as WebampTrack } from "webamp";
-import { Unauthorized, api, audioUrl, type SessionSnapshot, type Station, type Track } from "./api";
+import { Unauthorized, api, audioUrl, type Playlist, type SessionSnapshot, type Station, type Track } from "./api";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const clientId = crypto.randomUUID();
@@ -38,6 +38,7 @@ async function boot() {
   connectEvents();
   await refreshSkins();
   await refreshStations();
+  await refreshPlaylists();
 }
 
 async function refreshTracks(q: string) {
@@ -63,7 +64,10 @@ async function refreshTracks(q: string) {
       const add = document.createElement("button");
       add.textContent = "Add";
       add.onclick = () => { webamp?.appendTracks([toWebamp(t)]); };
-      li.append(meta, play, add);
+      const toList = document.createElement("button");
+      toList.textContent = "+ Playlist";
+      toList.onclick = () => void addToTargetPlaylist(t);
+      li.append(meta, play, add, toList);
       return li;
     }),
   );
@@ -97,12 +101,16 @@ async function startPlayer() {
   let lastSent = 0;
   let currentTrackId: string | null = null;
   let lastWebampStatus = "";
+  let lastPlayerStatus = "";
   const report = (force = false) => {
     if (!webamp) return;
     const status = webamp.getMediaStatus();
     // Webamp just started playing: the station stops (one source at a time)
     if (status === "PLAYING" && lastWebampStatus !== "PLAYING" && !stAudio().paused) stAudio().pause();
     lastWebampStatus = status;
+    const ps = webamp.getPlayerMediaStatus();
+    if (ps === "ENDED" && lastPlayerStatus !== "ENDED") void extendActivePlaylist();
+    lastPlayerStatus = ps;
     const state = status === "PLAYING" ? "playing" : status === "PAUSED" ? "paused" : "stopped";
     const key = `${state}|${currentTrackId ?? ""}`;
     const now = Date.now();
@@ -156,6 +164,68 @@ function connectEvents() {
     }
   };
   ws.onclose = () => setTimeout(() => { if (!$("app").hidden) connectEvents(); }, 3000);
+}
+
+// ---- playlists ---------------------------------------------------------------------------------
+// Playing a playlist hands its tracks to Webamp. When Webamp reaches the end of a playlist that
+// has "extend" switched on, the server picks new tracks from the library (same genre, artists not
+// already in the list) and they are appended and played.
+
+let playlists: Playlist[] = [];
+let activePlaylist: { id: string; name: string; extend: boolean } | null = null;
+
+async function refreshPlaylists() {
+  playlists = await api.playlists();
+  const target = $("pl-target") as HTMLSelectElement;
+  const keep = target.value;
+  target.replaceChildren(...playlists.map((p) => { const o = document.createElement("option"); o.value = p.id; o.textContent = p.name; return o; }));
+  if (keep && playlists.some((p) => p.id === keep)) target.value = keep;
+  $("pl-list").replaceChildren(...playlists.map((p) => {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = `${p.name} (${p.track_ids.length}${p.extend ? ", extends" : ""})`;
+    const play = document.createElement("button");
+    play.textContent = "Play";
+    play.disabled = p.track_ids.length === 0;
+    play.onclick = () => void playPlaylist(p.id);
+    li.append(name, play);
+    return li;
+  }));
+}
+
+async function addToTargetPlaylist(t: Track) {
+  const id = ($("pl-target") as HTMLSelectElement).value;
+  if (!id) { $("pl-status").textContent = "Create a playlist first."; return; }
+  try { await api.addToPlaylist(id, t.id); $("pl-status").textContent = `Added "${t.title}".`; await refreshPlaylists(); }
+  catch (e) { $("pl-status").textContent = `Could not add: ${(e as Error).message}`; }
+}
+
+async function playPlaylist(id: string) {
+  const p = await api.playlist(id);
+  const tracks = await Promise.all(p.track_ids.map((tid) => api.track(tid)));
+  remember(tracks);
+  stAudio().pause();
+  activePlaylist = { id: p.id, name: p.name, extend: p.extend };
+  webamp?.setTracksToPlay(tracks.map(toWebamp));
+  $("pl-status").textContent = `Playing "${p.name}"${p.extend ? "; it will add new artists when it ends" : ""}.`;
+}
+
+async function extendActivePlaylist() {
+  if (!activePlaylist?.extend) return;
+  const { id, name } = activePlaylist;
+  try {
+    const r = await api.extendPlaylist(id, 3);
+    if (r.added.length === 0) { $("pl-status").textContent = `"${name}" ended. ${r.reason ?? "Nothing new to add."}`; return; }
+    remember(r.added);
+    // after the end, "next" does not restart the player: select the first new track and play it
+    const firstNew = webamp?.getPlaylistTracks().length ?? 0;
+    webamp?.appendTracks(r.added.map(toWebamp));
+    webamp?.setCurrentTrack(firstNew);
+    webampPlay();
+    $("pl-status").textContent = `"${name}" ended: added ${r.added.length} new track${r.added.length === 1 ? "" : "s"} by ${r.added.map((t) => t.artist ?? "?").join(", ")}.`;
+    await refreshPlaylists();
+  } catch (e) { $("pl-status").textContent = `Could not extend "${name}": ${(e as Error).message}`; }
 }
 
 // ---- radio stations ------------------------------------------------------------------------
@@ -260,6 +330,13 @@ $("st-check").addEventListener("click", async () => {
     await new Promise((r) => setTimeout(r, 1000));
   }
   await refreshStations();
+});
+$("pl-create").addEventListener("click", async () => {
+  const input = $("pl-name") as HTMLInputElement;
+  const name = input.value.trim();
+  if (!name) { $("pl-status").textContent = "Give the playlist a name."; return; }
+  try { const p = await api.createPlaylist(name, ($("pl-extend") as HTMLInputElement).checked); input.value = ""; await refreshPlaylists(); ($("pl-target") as HTMLSelectElement).value = p.id; $("pl-status").textContent = `Created "${p.name}".`; }
+  catch (e) { $("pl-status").textContent = `Could not create: ${(e as Error).message}`; }
 });
 $("logout").addEventListener("click", async () => { await api.logout(); location.reload(); });
 $("skin-file").addEventListener("change", async (e) => {

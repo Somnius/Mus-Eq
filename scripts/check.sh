@@ -13,9 +13,11 @@ npx --yes @redocly/cli@2.76.0 lint docs/openapi.yaml | tail -2
 python3 scripts/readme-badges.py --check
 
 mkdir -p .work/tmp; work=$(mktemp -d "$PWD/.work/tmp/check.XXXXXX"); trap 'kill ${pid:-0} 2>/dev/null || true; rm -rf "$work"' EXIT
+# the browser test's library: the standard fixtures plus four short Rock tracks by different artists
+mkdir -p "$work/library"; cp -r crates/museq-server/tests/fixtures/lib/. "$work/library/"; cp crates/museq-server/tests/fixtures/ext/*.mp3 "$work/library/"
 token=$(head -c 24 /dev/urandom | base64 | tr -d '/+=')
 port=${MUSEQ_TEST_PORT:-8096}
-MUSEQ_ALLOW_PRIVATE_STATIONS=1 MUSEQ_TOKEN=$token MUSEQ_BIND=127.0.0.1:$port MUSEQ_LIBRARY=$PWD/crates/museq-server/tests/fixtures/lib \
+MUSEQ_ALLOW_PRIVATE_STATIONS=1 MUSEQ_TOKEN=$token MUSEQ_BIND=127.0.0.1:$port MUSEQ_LIBRARY=$work/library \
   MUSEQ_DB=$work/db MUSEQ_SKINS_DIR=$work/skins MUSEQ_WEB_DIR=$PWD/web/dist MUSEQ_STATIONS_SEED=$PWD/crates/museq-server/tests/fixtures/stations-seed.txt ./target/debug/museq-server >"$work/log" 2>&1 &
 pid=$!
 sleep 1

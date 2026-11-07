@@ -26,6 +26,17 @@
       </header>
       <p id="status" role="status"></p>
       <ul id="tracks"></ul>
+      <section id="playlists">
+        <h2>Playlists</h2>
+        <div class="row">
+          <input id="pl-name" type="text" placeholder="New playlist name">
+          <label><input id="pl-extend" type="checkbox" checked> add new artists in the same style when it ends</label>
+          <button id="pl-create" type="button">Create</button>
+        </div>
+        <label>Library "+" buttons add to: <select id="pl-target"></select></label>
+        <p id="pl-status" role="status"></p>
+        <ul id="pl-list"></ul>
+      </section>
       <section id="stations">
         <h2>Radio stations</h2>
         <div class="row">

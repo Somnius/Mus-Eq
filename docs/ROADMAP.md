@@ -89,10 +89,12 @@ Exit met on fixtures: the same source as FLAC, MP3 and OGG becomes one track wit
 - [ ] Not verified: that an AcoustID lookup with a **real key** accepts our fingerprints (no key, no `fpcalc` to compare); real MusicBrainz replies (only fakes); Discogs (needs the owner's token; later); a web UI for suggestions (API only for now)
 Exit met on fakes: a mistagged file shows a candidate and changes only on accept.
 
-### 3c: playlist extension (local pool) and a minimal playlist UI
-- [ ] `POST /v1/playlists/{id}/extend`: same genre, artists not already in the playlist, local library only; says so when the pool is empty
-- [ ] Web client: playlist list, play a playlist in Webamp, and when it ends call the extension for playlists that have it switched on
-Exit: a short playlist grows by N tracks with no repeated artist.
+### 3c: playlist extension (local pool) and a minimal playlist UI (built 2026-11-07)
+- [x] `POST /v1/playlists/{id}/extend`: same genre, artists not already in the playlist (accents and case ignored), one track per new artist, local library only; says so when the pool is empty or the playlist has no genre to match
+- [x] Web client: playlist list, create (with an "extend" switch), "+ Playlist" buttons on library rows, play a playlist in Webamp; when Webamp reaches the end of a playlist with extend on, the new tracks are appended and played
+- [x] Tests: 6 server tests (rules, accents, rotation, genre weight, API behaviour) and a browser test (a one-track playlist ends, grows by 3 tracks by new artists, playback carries on). Webamp needed an explicit "select the first new track and play" after the end: "next" alone did not restart it
+- [ ] Not verified: how the choice feels on a real library (the pick is deterministic and rotates, with no similarity beyond the genre tag); libraries without genre tags get no extension (the reason is shown); artists are matched by tag text only (no MusicBrainz ids yet)
+Exit met on fixtures: a short playlist grows by N tracks with no repeated artist.
 
 ### 3d: fetch (blocked on Q2)
 - [ ] Not started and no download code until Q2 is answered. Stays behind the config flag, off by default; the terms of YouTube, Spotify and Deezer are read by the owner first.

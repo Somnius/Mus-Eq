@@ -290,6 +290,40 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/playlists/{id}/extend:
+    post:
+      tags: [playlists]
+      operationId: extendPlaylist
+      summary: >-
+        Append tracks in the same style (shared genre) by artists that are not in the playlist yet,
+        one track per new artist, from the local library only. Says so when the pool is empty.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                count: { type: integer, minimum: 1, maximum: 20, default: 3 }
+      responses:
+        "200":
+          description: The tracks that were added (possibly none, with the reason)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [added, pool_empty]
+                properties:
+                  added:
+                    type: array
+                    items: { $ref: "#/components/schemas/Track" }
+                  pool_empty: { type: boolean }
+                  available_artists: { type: integer }
+                  reason: { type: string }
+        "400": { description: "count out of range", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "The playlist is empty", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /v1/playlists/{id}/items:
     put:
       tags: [playlists]

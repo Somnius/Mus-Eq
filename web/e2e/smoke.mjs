@@ -115,6 +115,34 @@ const playCmd = await fetch(`${base}/v1/session`, { method: "POST", headers: aut
 await page.waitForFunction(() => { const a = document.getElementById("st-audio"); return !a.paused && a.currentTime > 0; }, null, { timeout: 15000 }).catch(() => {});
 const afterPlay = await page.evaluate(() => { const a = document.getElementById("st-audio"); return { paused: a.paused, t: a.currentTime, pauses: window.__pauses.slice(-3), src: a.src, status: document.getElementById("st-status").textContent }; });
 check(playCmd.status === 202 && !afterPlay.paused, `a remote play command with a station id starts that station (HTTP ${playCmd.status}, stId=${stId}, ${JSON.stringify(afterPlay)}, errors=${JSON.stringify(errors.slice(-3))})`);
+// ---- playlist extension: play a one-track playlist; when it ends, new artists in the same style follow
+const rock = await (await fetch(`${base}/v1/tracks?q=rock%20one`, { headers: auth })).json();
+const rockOne = rock.items?.[0];
+const plRes = await fetch(`${base}/v1/playlists`, { method: "POST", headers: auth, body: JSON.stringify({ name: "E2E mix", extend: true }) });
+const pl = await plRes.json();
+await fetch(`${base}/v1/playlists/${pl.id}/items`, { method: "POST", headers: auth, body: JSON.stringify({ track_id: rockOne?.id }) });
+await page.reload();
+await page.waitForSelector("#app", { state: "visible" });
+await page.waitForFunction(() => [...document.querySelectorAll("#pl-list li .name")].some((n) => n.textContent.startsWith("E2E mix")));
+await page.locator("#pl-list li", { hasText: "E2E mix" }).locator("button", { hasText: "Play" }).click();
+let grown;
+for (let i = 0; i < 80; i++) {
+  grown = await (await fetch(`${base}/v1/playlists/${pl.id}`, { headers: auth })).json();
+  if (grown.track_ids.length > 1) break;
+  await new Promise((r) => setTimeout(r, 250));
+}
+check(grown.track_ids.length === 4, `when the playlist ended it grew by 3 tracks (${grown.track_ids.length} items)`);
+const names = [];
+for (const id of grown.track_ids) names.push((await (await fetch(`${base}/v1/tracks/${id}`, { headers: auth })).json()).artist);
+check(new Set(names).size === names.length && names.every((n) => /^Band /.test(n)), `every added track is by a new artist (${names.join(", ")})`);
+let cont;
+for (let i = 0; i < 60; i++) {
+  cont = await (await fetch(`${base}/v1/session`, { headers: auth })).json();
+  if (cont.track && cont.track.title !== "Rock One" && cont.state === "playing") break;
+  await new Promise((r) => setTimeout(r, 250));
+}
+check(cont?.track?.title !== "Rock One" && cont?.state === "playing", `playback carried on into the new tracks (${cont?.track?.title}, ${cont?.state})`);
+
 const dead = await fetch(`${base}/v1/stations`, { method: "POST", headers: auth, body: JSON.stringify({ name: "Dead FM", url: "http://127.0.0.1:9/none" }) });
 const job = await (await fetch(`${base}/v1/jobs`, { method: "POST", headers: auth, body: JSON.stringify({ kind: "check_stations" }) })).json();
 let res;

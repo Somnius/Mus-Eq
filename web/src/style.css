@@ -26,3 +26,6 @@ select { font:inherit; padding:.5rem; border:1px solid var(--line); border-radiu
 #st-list li { display:flex; gap:.5rem; align-items:center; padding:.3rem 0; border-bottom:1px solid var(--line); }
 #st-list .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dot { width:.6rem; height:.6rem; border-radius:50%; background:var(--muted); flex:none; } .dot.live { background:var(--accent); } .dot.dead { background:#e57373; }
+#playlists { margin-top:1.5rem; } #playlists h2 { font-size:1rem; margin:0 0 .5rem; }
+#pl-list { list-style:none; padding:0; margin:.5rem 0; } #pl-list li { display:flex; gap:.5rem; align-items:center; padding:.3rem 0; border-bottom:1px solid var(--line); }
+#pl-list .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

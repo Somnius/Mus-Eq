@@ -34,3 +34,4 @@
 - 2026-11-07 **Phase 3d (fetch) is blocked on Q2.** No download code is written until the owner answers.
 - 2026-11-07 **Accepted metadata corrections live in SQLite only** (Q12 default): the audio files are never rewritten, and a corrected track keeps its tags across rescans. Candidates from MusicBrainz and AcoustID are stored and never applied automatically.
 - 2026-11-07 **One shared rate limiter per outside service** (MusicBrainz about 1 request per second, AcoustID about 3 per second) so two jobs can't double the rate; only fake servers are used in tests and CI.
+- 2026-11-07 **Playlist extension uses the local library and the genre tag only** (no network, no downloads): same genre, a new artist each time. Style similarity beyond the genre tag is a later idea.
