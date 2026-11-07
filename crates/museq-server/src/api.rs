@@ -8,7 +8,7 @@ use axum::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -37,6 +37,7 @@ pub struct AppState {
     pub allow_private_stations: bool,
     pub services: Arc<crate::metadata::Services>,
     pub limiters: Arc<crate::metadata::Limiters>,
+    pub fetch: Arc<crate::fetch::FetchConfig>,
 }
 
 const COOKIE_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
@@ -66,7 +67,13 @@ impl AppState {
             allow_private_stations: false,
             services: Arc::new(crate::metadata::Services::default()),
             limiters: Arc::new(crate::metadata::Limiters::default()),
+            fetch: Arc::new(crate::fetch::FetchConfig::default()),
         }
+    }
+
+    pub fn fetch(mut self, cfg: crate::fetch::FetchConfig) -> Self {
+        self.fetch = Arc::new(cfg);
+        self
     }
 
     pub fn services(mut self, services: crate::metadata::Services) -> Self {
@@ -124,6 +131,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tracks/{id}/identify", post(crate::metadata::identify))
         .route("/v1/candidates/{id}/accept", post(crate::metadata::accept))
         .route("/v1/candidates/{id}/reject", post(crate::metadata::reject))
+        .route("/v1/fetch/status", get(fetch_status))
         .route("/v1/duplicates", get(crate::duplicates::list_duplicates))
         .route("/v1/duplicates/merge", post(crate::duplicates::merge))
         .route(
@@ -639,6 +647,9 @@ struct NewJob {
     /// For `tag`: only these tracks (default: every track with a missing artist or album)
     #[serde(default)]
     track_ids: Option<Vec<String>>,
+    /// For `fetch`: `{"url": "…"}`
+    #[serde(default)]
+    input: Option<Value>,
 }
 
 async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Response {
@@ -651,21 +662,35 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
     let kind = match body.kind.as_str() {
         k @ ("scan" | "check_stations" | "fingerprint" | "tag") => k.to_string(),
         "fetch" => {
-            return err(
-                StatusCode::FORBIDDEN,
-                "fetch is disabled in the configuration",
-            );
+            if !s.fetch.enabled {
+                let why = s.fetch.disabled_reason.clone().unwrap_or_default();
+                return err(StatusCode::FORBIDDEN, &format!("fetch is off: {why}"));
+            }
+            "fetch".to_string()
         }
         _ => return err(StatusCode::BAD_REQUEST, "unknown job kind"),
+    };
+    let fetch_source = if kind == "fetch" {
+        let url = body
+            .input
+            .as_ref()
+            .and_then(|i| i["url"].as_str())
+            .unwrap_or("");
+        match crate::fetch::parse_source(url) {
+            Ok(src) => Some(src),
+            Err(msg) => return err(StatusCode::BAD_REQUEST, &msg),
+        }
+    } else {
+        None
     };
     let id = {
         // Check and insert under one lock, so two requests can't both start the same kind of job.
         let conn = crate::db::lock(&s.db);
         let busy: rusqlite::Result<bool> = conn
             .query_row(
-                // scan and fingerprint share the disk and the CPU: never run them together
+                // scan, fingerprint and fetch share the disk and the CPU: never run them together
                 "SELECT 1 FROM job WHERE state IN ('queued','running') AND (kind=?1
-                   OR (?1 IN ('scan','fingerprint') AND kind IN ('scan','fingerprint')))",
+                   OR (?1 IN ('scan','fingerprint','fetch') AND kind IN ('scan','fingerprint','fetch')))",
                 [&kind],
                 |_| Ok(()),
             )
@@ -699,8 +724,8 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
             let d = task_db.clone();
             let stats = tokio::task::spawn_blocking(move || scan::scan(&d, &root))
                 .await
-                .map_err(|_| "scan crashed")?;
-            serde_json::to_string(&stats).map_err(|_| "cannot encode result")?
+                .map_err(|_| "scan crashed".to_string())?;
+            serde_json::to_string(&stats).map_err(|_| "cannot encode result".to_string())?
         } else if kind == "fingerprint" {
             crate::fingerprint::run_job(task_db.clone(), root.clone())
                 .await
@@ -709,6 +734,8 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
             crate::metadata::run_tag_job(app.clone(), only.clone())
                 .await
                 .to_string()
+        } else if let Some(source) = fetch_source {
+            crate::fetch::run(app.clone(), source).await?.to_string()
         } else {
             crate::stations::check_all(task_db.clone(), allow_private)
                 .await
@@ -718,13 +745,13 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
             "UPDATE job SET state='done', result=?2 WHERE id=?1",
             params![id, result],
         );
-        Ok::<(), &'static str>(())
+        Ok::<(), String>(())
     });
     // If the job fails or panics, mark it failed so later runs aren't blocked by a ghost.
     tokio::spawn(async move {
         let failure = match work.await {
             Ok(Ok(())) => None,
-            Ok(Err(msg)) => Some(msg.to_string()),
+            Ok(Err(msg)) => Some(msg),
             Err(_) => Some("job crashed".to_string()),
         };
         if let Some(msg) = failure {
@@ -749,4 +776,8 @@ async fn get_job(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
         Ok(None) => err(StatusCode::NOT_FOUND, "no such job"),
         Err(e) => internal(e),
     }
+}
+
+async fn fetch_status(State(s): State<AppState>) -> Json<Value> {
+    Json(crate::fetch::status(&s))
 }

@@ -190,6 +190,24 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
              ALTER TABLE fingerprint ADD COLUMN compared INTEGER NOT NULL DEFAULT 0;",
         )?;
     }
+    if version < 8 {
+        // Where a fetched file came from (never a secret: no cookies, no tokens).
+        step(
+            &conn,
+            8,
+            "CREATE TABLE provenance(
+               file_id INTEGER PRIMARY KEY REFERENCES file(id) ON DELETE CASCADE,
+               source TEXT NOT NULL,           -- youtube | spotify
+               source_url TEXT NOT NULL,
+               video_id TEXT NOT NULL,
+               fetched_at INTEGER NOT NULL,
+               tool_version TEXT,
+               matched_title TEXT,
+               matched_channel TEXT
+             );
+             CREATE INDEX provenance_video ON provenance(video_id);",
+        )?;
+    }
     // A job left "running" by a crash will never finish.
     conn.execute("UPDATE job SET state='failed', error='interrupted by restart' WHERE state IN ('queued','running')", [])?;
     Ok(conn)
@@ -258,7 +276,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         // data carried across, the new columns filled in, the new tables there
         let (track_id, mtime): (Option<i64>, i64) = conn
             .query_row("SELECT track_id, mtime FROM file WHERE id=7", [], |r| {
@@ -282,7 +300,14 @@ mod tests {
             search.contains("song"),
             "search text is backfilled: {search}"
         );
-        for table in ["skin", "station", "fingerprint", "candidate", "audio_match"] {
+        for table in [
+            "skin",
+            "station",
+            "fingerprint",
+            "candidate",
+            "audio_match",
+            "provenance",
+        ] {
             conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| {
                 r.get::<_, i64>(0)
             })

@@ -11,6 +11,9 @@ use std::path::PathBuf;
 /// - `MUSEQ_CONTACT` contact for the User-Agent sent to MusicBrainz (default: the project page)
 /// - `MUSEQ_MUSICBRAINZ_URL`, `MUSEQ_ACOUSTID_URL` override the service addresses (for testing; keep https in
 ///   production, the AcoustID key travels in the query string)
+/// - fetching (off by default): `MUSEQ_FETCH=on`, `MUSEQ_FETCH_ACK` (a typed acknowledgement, see the README),
+///   `MUSEQ_FETCH_YTDLP` (absolute path of yt-dlp), `MUSEQ_FETCH_INBOX`, `MUSEQ_FETCH_MAX_BYTES`,
+///   `MUSEQ_FETCH_TIMEOUT_S`, `MUSEQ_FETCH_COOKIES` (optional, mode 600, copied per run, never written)
 /// - `MUSEQ_ALLOW_PRIVATE_STATIONS` set to `1` to allow stations on loopback/private addresses (for radio on your own network)
 /// - `MUSEQ_WEB_DIR`  built web client to serve at `/` (optional)
 /// - `MUSEQ_TOKEN` or `MUSEQ_TOKEN_FILE`  the owner bearer token (required, at least 16 characters)
@@ -25,6 +28,7 @@ pub struct Config {
     pub stations_seeds: Vec<PathBuf>,
     pub allow_private_stations: bool,
     pub services: crate::metadata::Services,
+    pub fetch: crate::fetch::FetchConfig,
 }
 
 pub const MIN_TOKEN_LEN: usize = 16;
@@ -59,8 +63,11 @@ impl Config {
         if let Ok(contact) = std::env::var("MUSEQ_CONTACT") {
             services.user_agent = format!("Mus-Eq/{} ({})", env!("CARGO_PKG_VERSION"), contact);
         }
+        let library_path = std::env::var("MUSEQ_LIBRARY").unwrap_or_else(|_| "./library".into());
+        let fetch = crate::fetch::FetchConfig::from_env(std::path::Path::new(&library_path));
         Ok(Self {
             services,
+            fetch,
             bind: std::env::var("MUSEQ_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into()),
             library: std::env::var("MUSEQ_LIBRARY")
                 .unwrap_or_else(|_| "./library".into())

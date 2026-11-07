@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod duplicates;
 pub mod extend;
+pub mod fetch;
 pub mod fingerprint;
 pub mod metadata;
 pub mod scan;

@@ -897,6 +897,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "http-body-util",
+ "libc",
  "ogg",
  "opus",
  "reqwest",
