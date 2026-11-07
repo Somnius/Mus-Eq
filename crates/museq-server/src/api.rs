@@ -104,6 +104,8 @@ pub fn router(state: AppState) -> Router {
             get(crate::skins::list_skins).post(crate::skins::upload_skin),
         )
         .route("/v1/skins/{id}", get(crate::skins::get_skin))
+        .route("/v1/duplicates", get(crate::duplicates::list_duplicates))
+        .route("/v1/duplicates/merge", post(crate::duplicates::merge))
         .route(
             "/v1/stations",
             get(crate::stations::list_stations).post(crate::stations::add_station),
@@ -615,14 +617,14 @@ struct NewJob {
 
 async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Response {
     let kind = match body.kind.as_str() {
-        k @ ("scan" | "check_stations") => k.to_string(),
+        k @ ("scan" | "check_stations" | "fingerprint") => k.to_string(),
         "fetch" => {
             return err(
                 StatusCode::FORBIDDEN,
                 "fetch is disabled in the configuration",
             );
         }
-        "tag" | "fingerprint" => {
+        "tag" => {
             return err(
                 StatusCode::NOT_IMPLEMENTED,
                 "this job kind is not implemented yet",
@@ -635,7 +637,9 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
         let conn = crate::db::lock(&s.db);
         let busy: rusqlite::Result<bool> = conn
             .query_row(
-                "SELECT 1 FROM job WHERE kind=?1 AND state IN ('queued','running')",
+                // scan and fingerprint share the disk and the CPU: never run them together
+                "SELECT 1 FROM job WHERE state IN ('queued','running') AND (kind=?1
+                   OR (?1 IN ('scan','fingerprint') AND kind IN ('scan','fingerprint')))",
                 [&kind],
                 |_| Ok(()),
             )
@@ -666,6 +670,10 @@ async fn create_job(State(s): State<AppState>, Json(body): Json<NewJob>) -> Resp
                 .await
                 .map_err(|_| "scan crashed")?;
             serde_json::to_string(&stats).map_err(|_| "cannot encode result")?
+        } else if kind == "fingerprint" {
+            crate::fingerprint::run_job(task_db.clone(), root.clone())
+                .await
+                .to_string()
         } else {
             crate::stations::check_all(task_db.clone(), allow_private)
                 .await

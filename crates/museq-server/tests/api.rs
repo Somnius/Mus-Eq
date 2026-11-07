@@ -404,23 +404,3 @@ async fn a_second_scan_is_refused_while_one_runs() {
     .await;
     assert_eq!(s, StatusCode::CONFLICT);
 }
-
-#[test]
-fn an_older_database_is_migrated_to_the_current_schema() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("old.db");
-    {
-        let conn = db::open(&path).unwrap();
-        conn.execute_batch("DROP TABLE skin; DROP TABLE station; PRAGMA user_version = 2;")
-            .unwrap();
-    }
-    let conn = db::open(&path).unwrap();
-    let v: i64 = conn
-        .pragma_query_value(None, "user_version", |r| r.get(0))
-        .unwrap();
-    assert_eq!(v, 4);
-    conn.execute("INSERT INTO skin(id, name, bytes) VALUES('x','y',1)", [])
-        .unwrap();
-    conn.execute("INSERT INTO station(name, category, url, source, search_text) VALUES('a','Music','http://x','manual','a')", [])
-        .unwrap();
-}

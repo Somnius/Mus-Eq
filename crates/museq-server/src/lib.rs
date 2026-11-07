@@ -1,6 +1,8 @@
 pub mod api;
 pub mod config;
 pub mod db;
+pub mod duplicates;
+pub mod fingerprint;
 pub mod scan;
 pub mod session;
 pub mod skins;

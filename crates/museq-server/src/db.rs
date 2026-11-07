@@ -110,7 +110,95 @@ fn init(conn: Connection) -> rusqlite::Result<Connection> {
         )?;
         conn.pragma_update(None, "user_version", 4)?;
     }
+    if version < 5 {
+        // One track can own several files (duplicates merged by the owner), and files now carry
+        // the facts needed to rank their quality. Every file is re-probed on the next scan.
+        conn.execute_batch(
+            "ALTER TABLE file ADD COLUMN track_id INTEGER REFERENCES track(id) ON DELETE SET NULL;
+             ALTER TABLE file ADD COLUMN sample_rate INTEGER;
+             ALTER TABLE file ADD COLUMN channels INTEGER;
+             ALTER TABLE file ADD COLUMN bitrate_kbps INTEGER;
+             ALTER TABLE file ADD COLUMN lossless INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE track ADD COLUMN genre TEXT;
+             UPDATE file SET track_id = (SELECT id FROM track WHERE preferred_file_id = file.id);
+             UPDATE file SET mtime = 0;
+             CREATE INDEX file_track ON file(track_id);
+             CREATE TABLE fingerprint(
+               file_id INTEGER PRIMARY KEY REFERENCES file(id) ON DELETE CASCADE,
+               sha256 TEXT NOT NULL,
+               status TEXT NOT NULL,  -- ok | unsupported | error
+               error TEXT,
+               duration_ms INTEGER,
+               data BLOB
+             );",
+        )?;
+        conn.pragma_update(None, "user_version", 5)?;
+    }
     // A job left "running" by a crash will never finish.
     conn.execute("UPDATE job SET state='failed', error='interrupted by restart' WHERE state IN ('queued','running')", [])?;
     Ok(conn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A database created by the first release, with a track in a playlist, must come through
+    /// every later migration with its data and get the new structure.
+    #[test]
+    fn a_version_1_database_is_migrated_with_its_data() {
+        let dir = std::env::temp_dir().join(format!("museq-mig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+            conn.execute_batch(SCHEMA_V1).unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            conn.execute_batch(
+                "INSERT INTO file(id, sha256, path, bytes, mtime, codec, duration_ms) VALUES(7,'abc','a/b.flac',100,5,'flac',1000);
+                 INSERT INTO track(id, title, artist, album, duration_ms, preferred_file_id) VALUES(3,'Song','Art','Alb',1000,7);
+                 INSERT INTO playlist(id, name) VALUES(1,'mine');
+                 INSERT INTO playlist_item(playlist_id, position, track_id) VALUES(1,0,3);",
+            )
+            .unwrap();
+        }
+        let conn = open(&path).unwrap();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
+        // data carried across, the new columns filled in, the new tables there
+        let (track_id, mtime): (Option<i64>, i64) = conn
+            .query_row("SELECT track_id, mtime FROM file WHERE id=7", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(track_id, Some(3), "the file must point at its track");
+        assert_eq!(mtime, 0, "files are re-probed on the next scan");
+        let items: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM playlist_item WHERE track_id=3",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(items, 1);
+        let search: String = conn
+            .query_row("SELECT search_text FROM track WHERE id=3", [], |r| r.get(0))
+            .unwrap();
+        assert!(
+            search.contains("song"),
+            "search text is backfilled: {search}"
+        );
+        for table in ["skin", "station", "fingerprint"] {
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap();
+        }
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

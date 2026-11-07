@@ -41,7 +41,7 @@ phone "radio uplink" (Ogg/Opus over HTTP chunks, WebRTC later) --> radio(live)
 | Deploy | Docker/Podman, Compose, Caddy optional | phone-as-server = same binary, later |
 
 ## Data model (SQLite)
-`file(id, sha256, path, bytes, codec, bitrate, sample_rate, duration_ms)` ·
+`file(id, track_id, sha256, path, bytes, codec, bitrate_kbps, sample_rate, channels, lossless, duration_ms)` (one track can own several files; `track.preferred_file_id` is the one played) · `fingerprint(file_id, sha256, status ok|unsupported|error, duration_ms, data)` ·
 `track(id, title, artist_id, album_id, mbid, acoustid, chromaprint, preferred_file_id, quality_score, source_kind, source_ref)` + `track_file(track_id, file_id, quality_rank)` ·
 `artist`, `album` ·
 `playlist(id, name, kind user|generated|extension, seed_genres, extend BOOL)` + `playlist_item(playlist_id, position, track_id)` ·
@@ -58,7 +58,8 @@ Rules: byte identity = sha256. Song identity for dedupe = fingerprint (later); u
 - `POST /v1/jobs` with `kind` scan|check_stations|fetch|tag|fingerprint; `fetch` answers 403 unless enabled in config; one job of a kind at a time (409 otherwise).
 - Station addresses: a station URL must be http(s) with a host and no credentials. By default loopback, private, link-local (including the cloud metadata address), carrier-grade NAT and unique-local addresses are refused, both when adding a station and in every hop of the liveness check (redirects are followed by hand, at most 3, within one 10 s deadline). Radio on your own network needs `MUSEQ_ALLOW_PRIVATE_STATIONS=1`. Limit: a name is resolved again when connecting, so a hostile DNS server could answer differently the second time; stations are added by the owner only.
 - Errors are `{ "error": "message" }` with a normal HTTP status, including unknown `/v1/...` paths. Malformed ids or bodies that axum rejects before our code runs (a non-numeric `{id}`, invalid JSON) still answer with its plain-text 400/422.
-- Implemented so far: health, login/logout, tracks, audio (Range), playlists, scan jobs, session + events, skins, stations (list, add, delete, liveness check job, remote play). Search is case- and accent-insensitive (Greek tonos and final sigma fold) through a `search_text` column.
+- Duplicates (`GET /v1/duplicates`, `POST /v1/duplicates/merge`): identical bytes are found by hash, the same recording in different files by an in-process Chromaprint fingerprint (job `fingerprint`, two files at a time, never together with a scan). A merge joins files under one track in SQLite only: no file is ever deleted or rewritten, and playlist entries follow. Opus cannot be fingerprinted yet (Symphonia has no Opus decoder); such files get status `unsupported`.
+- Implemented so far: health, login/logout, tracks, audio (Range), playlists, scan jobs, session + events, skins, stations (list, add, delete, liveness check job, remote play), fingerprint job, duplicates (list, merge). Search is case- and accent-insensitive (Greek tonos and final sigma fold) through a `search_text` column.
 
 ## Modules
 1 api · 2 library (scan, tags, hash, quality) · 3 fetch (Spotify link → ISRC/title via Deezer → YouTube Music search → yt-dlp → tag+import) · 4 metadata · 5 dedupe (Chromaprint similarity, keep best, never auto-delete) · 6 playlistext (same genre/style, skip artists already present, introduce new; local pool first, online suggestions only once fetch exists) · 7 radio · 8 transcode · 9 offline (manifest diff, resume) · 10 auth · clients: web, android, desktop, widgets (Omarchy bar widget reading now-playing).

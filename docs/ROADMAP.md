@@ -72,13 +72,14 @@ First-party bar widget in its own repository, built from the findings in `docs/P
 ## Phase 3: metadata, duplicates, extension, fetch (split into four steps; plan 2026-11-07)
 Checked before starting (2026-11-07): the pure-Rust fingerprint crate `rusty-chromaprint` (MIT, one `rubato`, no second Symphonia) fingerprints FLAC, MP3 and OGG through Symphonia and matches re-encodes (same noise source: score 0.33 as MP3, 1.07 as OGG; a different source scored 7.05; lower is better). **Symphonia 0.6.1 cannot decode Opus** ("unsupported audio codec"), so Opus files are marked "unsupported for fingerprinting" until ffmpeg joins the image (phase 5). Compatibility of its compressed fingerprint with AcoustID lookups is **unverified** (no `fpcalc` here to compare; it needs a real lookup with a registered key). The score thresholds come from synthetic noise only and must be checked on real music.
 
-### 3a: fingerprints and duplicates (no network)
-- [ ] Migration v5: one track can own several files (`file.track_id`), plus sample rate, channels, average bitrate, lossless flag and genre; all files re-probed on the next scan
-- [ ] `fingerprint` job: decode with Symphonia, fingerprint in Rust, 2 at a time, tolerant of files that vanish; Opus and unreadable files get a status, never fail the job
-- [ ] `GET /v1/duplicates`: exact (same hash) and audio (fingerprint) groups, each with a proposed keeper (lossless, then bitrate, then sample rate, then size) and the proof; nothing is ever deleted
-- [ ] `POST /v1/duplicates/merge`: merge in SQLite only (files stay on disk, playlist entries are re-pointed)
-- [ ] Tests with seeded noise fixtures re-encoded as FLAC, MP3 and OGG; Opus and merge/playlist cases
-Exit: a known duplicate pair (same source as FLAC and MP3) collapses to one track with the FLAC preferred, playlists keep working, different sources stay apart.
+### 3a: fingerprints and duplicates (built 2026-11-07, no network)
+- [x] Migration v5 (tested with a real version-1 database and its data): one track can own several files (`file.track_id`), plus sample rate, channels, average bitrate, lossless flag and genre; every file is re-probed on the next scan
+- [x] `fingerprint` job: decode with Symphonia, fingerprint in Rust, 2 at a time, never together with a scan, tolerant of files that vanish; Opus and unreadable files get a status, never fail the job
+- [x] `GET /v1/duplicates`: exact (same hash) and audio (fingerprint) groups, each with a proposed keeper and the proof; nothing is ever deleted
+- [x] `POST /v1/duplicates/merge`: merge in SQLite only (files stay on disk and stream; playlist entries re-pointed; a merged track survives the loss of its preferred file)
+- [x] Tests: seeded-noise fixtures (FLAC, MP3, OGG of one source, a different source), an Opus file, exact copies, merge validation, quality columns, scan/fingerprint exclusion
+- [ ] Not verified: score thresholds on real music (only synthetic noise so far), AcoustID compatibility of the output, Opus fingerprinting, speed on a large library, a web UI for duplicates (API only for now)
+Exit met on fixtures: the same source as FLAC, MP3 and OGG becomes one track with the FLAC preferred, playlists keep working, the other source stays apart.
 
 ### 3b: metadata candidates
 - [ ] MusicBrainz text search for weak or missing tags (1 request per second, descriptive User-Agent, configurable base URL, only fake servers in tests); candidates stored, applied to the database only on accept (Q12 default; files are not rewritten)

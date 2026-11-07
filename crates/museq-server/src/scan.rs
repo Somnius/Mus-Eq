@@ -32,7 +32,11 @@ pub struct Probed {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    pub genre: Option<String>,
     pub duration_ms: Option<i64>,
+    pub sample_rate: Option<i64>,
+    pub channels: Option<i64>,
+    pub alac: bool,
 }
 
 fn is_audio(path: &Path) -> bool {
@@ -93,6 +97,11 @@ pub fn probe(path: &Path) -> Probed {
         return out;
     };
     if let Some(track) = format.default_track(TrackType::Audio) {
+        if let Some(a) = track.codec_params.as_ref().and_then(|p| p.audio()) {
+            out.sample_rate = a.sample_rate.map(i64::from);
+            out.channels = a.channels.as_ref().map(|c| c.count() as i64);
+            out.alac = a.codec == symphonia::core::codecs::audio::well_known::CODEC_ID_ALAC;
+        }
         if let (Some(tb), Some(d)) = (track.time_base, track.duration) {
             out.duration_ms = tb.calc_duration(d).map(|t| t.as_millis() as i64);
         } else if let (Some(frames), Some(rate)) = (
@@ -118,6 +127,9 @@ pub fn probe(path: &Path) -> Probed {
                 }
                 Some(StandardTag::Album(v)) if out.album.is_none() => {
                     out.album = Some(v.to_string())
+                }
+                Some(StandardTag::Genre(v)) if out.genre.is_none() => {
+                    out.genre = Some(v.to_string())
                 }
                 _ => {}
             }
@@ -185,6 +197,11 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
                 .unwrap_or_else(|| rel.clone())
         });
         let search = crate::db::search_text(&title, p.artist.as_deref(), p.album.as_deref());
+        let lossless = p.alac || matches!(codec.as_deref(), Some("flac" | "wav" | "aif" | "aiff"));
+        let bitrate_kbps = p
+            .duration_ms
+            .filter(|d| *d > 0)
+            .map(|d| bytes.saturating_mul(8) / d);
 
         let mut conn = crate::db::lock(db);
         // A moved or renamed file has the same content hash as a row whose path is gone:
@@ -210,23 +227,32 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
             match target {
                 Some(id) => {
                     tx.execute(
-                        "UPDATE file SET sha256=?1, path=?7, bytes=?2, mtime=?3, codec=?4, duration_ms=?5 WHERE id=?6",
-                        params![sha, bytes, mtime, codec, p.duration_ms, id, rel],
+                        "UPDATE file SET sha256=?1, path=?7, bytes=?2, mtime=?3, codec=?4, duration_ms=?5,
+                           sample_rate=?8, channels=?9, bitrate_kbps=?10, lossless=?11 WHERE id=?6",
+                        params![sha, bytes, mtime, codec, p.duration_ms, id, rel, p.sample_rate, p.channels, bitrate_kbps, lossless],
                     )?;
+                    // the track follows its preferred file's tags
                     tx.execute(
-                        "UPDATE track SET title=?1, artist=?2, album=?3, duration_ms=?4, search_text=?6 WHERE preferred_file_id=?5",
-                        params![title, p.artist, p.album, p.duration_ms, id, search],
+                        "UPDATE track SET title=?1, artist=?2, album=?3, duration_ms=?4, search_text=?6, genre=?7 WHERE preferred_file_id=?5",
+                        params![title, p.artist, p.album, p.duration_ms, id, search, p.genre],
                     )?;
+                    tx.execute("UPDATE file SET track_id = (SELECT id FROM track WHERE preferred_file_id = ?1) WHERE id = ?1 AND track_id IS NULL", [id])?;
                 }
                 None => {
                     tx.execute(
-                        "INSERT INTO file(sha256, path, bytes, mtime, codec, duration_ms) VALUES(?1,?2,?3,?4,?5,?6)",
-                        params![sha, rel, bytes, mtime, codec, p.duration_ms],
+                        "INSERT INTO file(sha256, path, bytes, mtime, codec, duration_ms, sample_rate, channels, bitrate_kbps, lossless)
+                         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                        params![sha, rel, bytes, mtime, codec, p.duration_ms, p.sample_rate, p.channels, bitrate_kbps, lossless],
                     )?;
                     let id = tx.last_insert_rowid();
                     tx.execute(
-                        "INSERT INTO track(title, artist, album, duration_ms, preferred_file_id, search_text) VALUES(?1,?2,?3,?4,?5,?6)",
-                        params![title, p.artist, p.album, p.duration_ms, id, search],
+                        "INSERT INTO track(title, artist, album, duration_ms, preferred_file_id, search_text, genre) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                        params![title, p.artist, p.album, p.duration_ms, id, search, p.genre],
+                    )?;
+                    let track_id = tx.last_insert_rowid();
+                    tx.execute(
+                        "UPDATE file SET track_id=?1 WHERE id=?2",
+                        params![track_id, id],
                     )?;
                 }
             }
@@ -246,7 +272,17 @@ pub fn scan(db: &Mutex<Connection>, root: &Path) -> ScanStats {
         .and_then(|mut s| s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect())
         .unwrap_or_default();
     for (id, path) in known {
-        if !seen.contains(&path) && conn.execute("DELETE FROM file WHERE id=?1", [id]).is_ok() {
+        if seen.contains(&path) {
+            continue;
+        }
+        // If the vanished file was the preferred one of a track that still has other files
+        // (a merged duplicate), hand the track to another file instead of dropping it.
+        let _ = conn.execute(
+            "UPDATE track SET preferred_file_id = (SELECT id FROM file WHERE track_id = track.id AND id <> ?1 ORDER BY lossless DESC, bitrate_kbps DESC, id LIMIT 1)
+             WHERE preferred_file_id = ?1 AND EXISTS (SELECT 1 FROM file WHERE track_id = track.id AND id <> ?1)",
+            [id],
+        );
+        if conn.execute("DELETE FROM file WHERE id=?1", [id]).is_ok() {
             stats.removed += 1;
         }
     }

@@ -58,6 +58,57 @@ paths:
       summary: End the browser session (the cookie id is revoked server-side). Needs auth like any mutation.
       responses:
         "204": { description: Cookie cleared }
+  /v1/duplicates:
+    get:
+      tags: [library]
+      operationId: listDuplicates
+      summary: >-
+        Groups of files that are the same recording: identical bytes, or the same audio
+        (fingerprint match) in any format. Each group names the proposed keeper (lossless, then
+        bitrate, then sample rate, then size) and the proof. Nothing is deleted.
+      responses:
+        "200":
+          description: Groups still to be decided (merged ones are not listed again)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groups]
+                properties:
+                  note: { type: string }
+                  groups:
+                    type: array
+                    items: { $ref: "#/components/schemas/DuplicateGroup" }
+  /v1/duplicates/merge:
+    post:
+      tags: [library]
+      operationId: mergeDuplicates
+      summary: >-
+        Join the given files under the track of the kept file. The files stay on disk and keep
+        streaming; playlist entries of the absorbed tracks now point at the kept track.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_ids, keep_file_id]
+              properties:
+                file_ids: { type: array, minItems: 2, items: { type: string } }
+                keep_file_id: { type: string, description: "One of file_ids; becomes the preferred file" }
+      responses:
+        "200":
+          description: Merged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  track_id: { type: string }
+                  preferred_file_id: { type: string }
+                  merged_files: { type: integer }
+        "400": { description: "Fewer than two files, keep not in the list, or an invalid id", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/tracks:
     get:
       tags: [library]
@@ -512,6 +563,7 @@ components:
       properties:
         id: { type: string }
         title: { type: string }
+        genre: { type: [string, "null"] }
         artist: { type: [string, "null"] }
         album: { type: [string, "null"] }
         duration_ms: { type: [integer, "null"] }
@@ -560,6 +612,37 @@ components:
         result: { type: [object, "null"], additionalProperties: true }
         error: { type: [string, "null"] }
         result_track_id: { type: string }
+    DuplicateGroup:
+      type: object
+      required: [id, keep_file_id, files, proof]
+      properties:
+        id: { type: string }
+        keep_file_id: { type: string }
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              file_id: { type: string }
+              track_id: { type: [string, "null"] }
+              title: { type: [string, "null"] }
+              artist: { type: [string, "null"] }
+              path: { type: string }
+              codec: { type: [string, "null"] }
+              lossless: { type: boolean }
+              bitrate_kbps: { type: [integer, "null"] }
+              sample_rate: { type: [integer, "null"] }
+              bytes: { type: integer }
+              duration_ms: { type: [integer, "null"] }
+        proof:
+          type: array
+          items:
+            type: object
+            properties:
+              a: { type: string }
+              b: { type: string }
+              kind: { type: string, enum: [hash, audio] }
+              score: { type: [number, "null"], description: "Chromaprint score for audio proofs: lower is more alike" }
     Skin:
       type: object
       required: [id, name]
