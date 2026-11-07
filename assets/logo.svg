@@ -1,36 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Mus-Eq">
-  <title>Mus-Eq</title>
-  <defs>
-    <linearGradient id="led" gradientUnits="userSpaceOnUse" x1="0" y1="208" x2="0" y2="52">
-      <stop offset="0" stop-color="#1c8a44"/>
-      <stop offset="0.55" stop-color="#86d24a"/>
-      <stop offset="1" stop-color="#f2d34b"/>
-    </linearGradient>
-  </defs>
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="#14171c" stroke="#d5dae3" stroke-width="10"/>
-  <g fill="url(#led)">
-    <rect x="40" y="192" width="40" height="16" rx="3"/>
-    <rect x="40" y="170" width="40" height="16" rx="3"/>
-    <rect x="40" y="148" width="40" height="16" rx="3"/>
-    <rect x="40" y="126" width="40" height="16" rx="3"/>
-    <rect x="40" y="104" width="40" height="16" rx="3"/>
-    <rect x="40" y="82" width="40" height="16" rx="3"/>
-    <rect x="40" y="60" width="40" height="16" rx="3"/>
-    <rect x="108" y="192" width="40" height="16" rx="3"/>
-    <rect x="108" y="170" width="40" height="16" rx="3"/>
-    <rect x="108" y="148" width="40" height="16" rx="3"/>
-    <rect x="108" y="126" width="40" height="16" rx="3"/>
-    <rect x="176" y="192" width="40" height="16" rx="3"/>
-    <rect x="176" y="170" width="40" height="16" rx="3"/>
-    <rect x="176" y="148" width="40" height="16" rx="3"/>
-    <rect x="176" y="126" width="40" height="16" rx="3"/>
-    <rect x="176" y="104" width="40" height="16" rx="3"/>
-    <rect x="176" y="82" width="40" height="16" rx="3"/>
-    <rect x="176" y="60" width="40" height="16" rx="3"/>
-  </g>
-  <g fill="#f4f5f7">
-    <rect x="40" y="44" width="40" height="8" rx="2"/>
-    <rect x="108" y="110" width="40" height="8" rx="2"/>
-    <rect x="176" y="44" width="40" height="8" rx="2"/>
-  </g>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="256" height="256" viewBox="0 0 256 256">
+<rect x="8" y="8" width="240" height="240" rx="56" fill="#16181d"/>
+<rect x="8" y="8" width="240" height="240" rx="56" fill="none" stroke="#3a3f4a" stroke-width="4"/>
+<path d="M52 180V48h40l36 52 36-52h40v132h-38v-68l-38 52-38-52v68z" fill="#f2f2f2"/>
+<g fill="#ff5a36"><rect x="52" y="204" width="44" height="14" rx="7"/><rect x="106" y="196" width="44" height="14" rx="7"/><rect x="160" y="188" width="44" height="14" rx="7"/></g>
 </svg>
